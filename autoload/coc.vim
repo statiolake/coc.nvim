@@ -68,7 +68,7 @@ function! coc#_do_complete(start, items, preselect)
         \ 'candidates': a:items,
         \ 'preselect': a:preselect
         \}
-  if mode() =~# 'i' && &paste != 1
+  if mode() =~# 'i' && &paste != 1 && coc#_is_im_disabled()
     call feedkeys("\<Plug>CocRefresh", 'i')
   endif
 endfunction
@@ -108,6 +108,10 @@ endfunction
 function! coc#_select() abort
   if !pumvisible() | return | endif
   call feedkeys("\<C-y>", 'in')
+endfunction
+
+function! coc#_is_im_disabled() abort
+  return !exists('*getimstatus') || !getimstatus()
 endfunction
 
 function! coc#start(...)
