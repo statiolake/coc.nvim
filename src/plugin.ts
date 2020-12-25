@@ -383,6 +383,9 @@ export default class Plugin extends EventEmitter {
     workspace.onDidChangeWorkspaceFolders(() => {
       nvim.setVar('WorkspaceFolders', workspace.folderPaths, true)
     })
+    this.addAction('callHierarchy', () => {
+      return this.handler.getCallHierarchy()
+    })
     commandManager.init(nvim, this)
   }
 
