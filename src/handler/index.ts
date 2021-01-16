@@ -22,8 +22,8 @@ import Colors from './colors/index'
 import Format from './format'
 import { addDocument, isMarkdown, SymbolInfo, synchronizeDocument } from './helper'
 import Highlights from './highlights'
-import SemanticHighlights from './semanticHighlights'
 import Refactor from './refactor/index'
+import SemanticHighlights, { Highlight } from './semanticHighlights'
 import Signature from './signature'
 import Symbols from './symbols'
 const logger = require('../util/logger')('Handler')
@@ -43,7 +43,7 @@ interface Preferences {
 export default class Handler {
   private preferences: Preferences
   private documentHighlighter: Highlights
-  private semanticHighlighter: SemanticHighlights
+  private documentSemanticHighlighter: SemanticHighlights
   private colors: Colors
   private symbols: Symbols
   private hoverFactory: FloatFactory
@@ -72,7 +72,7 @@ export default class Handler {
     this.codeLens = new CodeLens(nvim)
     this.colors = new Colors(nvim)
     this.documentHighlighter = new Highlights(nvim)
-    this.semanticHighlighter = new SemanticHighlights(nvim)
+    this.documentSemanticHighlighter = new SemanticHighlights(nvim)
     events.on(['CursorMoved', 'CursorMovedI', 'InsertEnter', 'InsertSnippet', 'InsertLeave'], () => {
       if (this.requestTokenSource) {
         this.requestTokenSource.cancel()
@@ -612,8 +612,21 @@ export default class Handler {
     await this.documentHighlighter.highlight()
   }
 
-  public async semanticHighlights(): Promise<void> {
-    await this.semanticHighlighter.highlight()
+  public async semanticHighlight(): Promise<boolean> {
+    const { doc } = await this.getCurrentState()
+    if (!doc) return false
+
+    synchronizeDocument(doc)
+    return await this.documentSemanticHighlighter.semanticHighlight(doc)
+  }
+
+  public async getSemanticHighlights(): Promise<Highlight[]> {
+    const { doc } = await this.getCurrentState()
+    if (!doc) return null
+
+    synchronizeDocument(doc)
+    return await this.documentSemanticHighlighter
+      .getHighlights(doc)
   }
 
   public async getSymbolsRanges(): Promise<Range[]> {
@@ -935,6 +948,7 @@ export default class Handler {
     this.colors.dispose()
     this.format.dispose()
     this.documentHighlighter.dispose()
+    this.documentSemanticHighlighter.dispose()
     disposeAll(this.disposables)
   }
 }

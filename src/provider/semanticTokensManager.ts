@@ -22,6 +22,10 @@ export default class SemanticTokensManager extends Manager<DocumentSemanticToken
     })
   }
 
+  public get legend(): SemanticTokensLegend {
+    return this._legend
+  }
+
   public async provideDocumentSemanticTokens(document: TextDocument, token: CancellationToken): Promise<SemanticTokens> {
     let item = this.getProvider(document)
     if (!item) return null
