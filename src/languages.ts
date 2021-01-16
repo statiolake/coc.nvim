@@ -426,6 +426,10 @@ class Languages {
     return this.semanticTokensManager.provideDocumentSemanticTokens(document, token)
   }
 
+  public getSemanticTokensLegend(): SemanticTokensLegend {
+    return this.semanticTokensManager.legend
+  }
+
   public hasProvider(id: ProviderName, document: TextDocument): boolean {
     switch (id) {
       case 'rename':

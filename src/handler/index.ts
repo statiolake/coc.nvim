@@ -21,6 +21,7 @@ import Colors from './colors/index'
 import Format from './format'
 import { addDocument, isMarkdown, SymbolInfo, synchronizeDocument } from './helper'
 import Highlights from './highlights'
+import SemanticHighlights from './semanticHighlights'
 import Refactor from './refactor/index'
 import Signature from './signature'
 import Symbols from './symbols'
@@ -41,6 +42,7 @@ interface Preferences {
 export default class Handler {
   private preferences: Preferences
   private documentHighlighter: Highlights
+  private documentSemanticHighlighter: SemanticHighlights
   private colors: Colors
   private symbols: Symbols
   private hoverFactory: FloatFactory
@@ -87,6 +89,7 @@ export default class Handler {
     this.codeLens = new CodeLens(nvim)
     this.colors = new Colors(nvim)
     this.documentHighlighter = new Highlights(nvim)
+    this.documentSemanticHighlighter = new SemanticHighlights(nvim)
     this.disposables.push(commandManager.registerCommand('editor.action.pickColor', () => {
       return this.colors.pickColor()
     }))
@@ -612,6 +615,19 @@ export default class Handler {
     await this.documentHighlighter.highlight()
   }
 
+  public async semanticHighlight(): Promise<boolean> {
+    const { doc } = await this.getCurrentState()
+    synchronizeDocument(doc)
+    return await this.documentSemanticHighlighter.semanticHighlight(doc)
+  }
+
+  public async getSemanticHighlightGroups(): Promise<string[]> {
+    const { doc } = await this.getCurrentState()
+    synchronizeDocument(doc)
+    return await this.documentSemanticHighlighter
+      .getSemanticHighlightGroups(doc)
+  }
+
   public async getSymbolsRanges(): Promise<Range[]> {
     let { doc, position } = await this.getCurrentState()
     let highlights = await this.documentHighlighter.getHighlights(doc, position)
@@ -932,6 +948,7 @@ export default class Handler {
     this.colors.dispose()
     this.format.dispose()
     this.documentHighlighter.dispose()
+    this.documentSemanticHighlighter.dispose()
     disposeAll(this.disposables)
   }
 }
