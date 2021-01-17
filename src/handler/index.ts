@@ -617,15 +617,19 @@ export default class Handler {
 
   public async semanticHighlight(): Promise<boolean> {
     const { doc } = await this.getCurrentState()
+    if (!doc) return false
+
     synchronizeDocument(doc)
     return await this.documentSemanticHighlighter.semanticHighlight(doc)
   }
 
-  public async getSemanticHighlightGroups(): Promise<string[]> {
+  public async getSemanticHighlights(): Promise<[group: string, range: Range][]> {
     const { doc } = await this.getCurrentState()
+    if (!doc) return null
+
     synchronizeDocument(doc)
     return await this.documentSemanticHighlighter
-      .getSemanticHighlightGroups(doc)
+      .getHighlights(doc)
   }
 
   public async getSymbolsRanges(): Promise<Range[]> {

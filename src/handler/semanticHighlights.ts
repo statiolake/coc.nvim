@@ -51,39 +51,26 @@ export default class SemanticHighlights {
     if (Array.isArray(res) && res[1] != null) {
       logger.error("Error on highlight", res[1][2])
     } else {
-      this.buffers.add(doc.bufnr)
+      this.highlights.set(bufnr, highlights)
     }
 
     return true
   }
 
-  public async getSemanticHighlightGroups(doc: Document): Promise<string[]> {
-    this.cancel()
-
-    if (!doc || !doc.attached) return null
-    if (!languages.hasProvider("semanticTokens", doc.textDocument)) return null
-
-    const highlights = await this.getHighlights(doc)
-    if (!highlights) return []
-
-    return [...new Set(highlights.map(([group]) => group))]
-  }
-
   public async getHighlights(
     doc: Document
   ): Promise<[group: string, range: Range][]> {
-    if (!doc || !doc.attached || doc.isCommandLine) return null
+    if (!doc || !doc.attached) return null
+    if (!languages.hasProvider("semanticTokens", doc.textDocument)) return null
+
     try {
-      this.tokenSource = new CancellationTokenSource()
+      const { token: _token } = new CancellationTokenSource()
       doc.forceSync()
-      const { token } = this.tokenSource
       const legend = languages.getSemanticTokensLegend()
       const highlights = await languages.provideDocumentSemanticTokens(
         doc.textDocument,
-        token
+        _token
       )
-      this.tokenSource = null
-      if (token.isCancellationRequested) return null
 
       let res: [string, Range][] = []
       let currentLine = 0

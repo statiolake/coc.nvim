@@ -28,7 +28,7 @@ export default class Plugin extends EventEmitter {
   private _ready = false
   private handler: Handler | undefined
   private infoChannel: OutputChannel
-  private semanticHighlightGroupsChannel: OutputChannel
+  private semanticHighlightInfoChannel: OutputChannel
   private cursors: Cursors
   private actions: Map<string, Function> = new Map()
 
@@ -393,19 +393,28 @@ export default class Plugin extends EventEmitter {
     this.addAction('semanticHighlight', async() => {
       return await this.handler.semanticHighlight()
     })
-    this.addAction("showAllSemanticHighlightGroups", async () => {
-      if (!this.semanticHighlightGroupsChannel) {
-        this.semanticHighlightGroupsChannel = window
-          .createOutputChannel("semanticHighlightGroups")
+    this.addAction("showSemanticHighlightInfo", async () => {
+      if (!this.semanticHighlightInfoChannel) {
+        this.semanticHighlightInfoChannel = window
+          .createOutputChannel("semanticHighlightInfo")
       } else {
-        this.semanticHighlightGroupsChannel.clear()
+        this.semanticHighlightInfoChannel.clear()
       }
-      const channel = this.semanticHighlightGroupsChannel
-      channel.appendLine("## List of all semantic highlight groups:")
+      const channel = this.semanticHighlightInfoChannel
+
+      const highlights = await this.handler.getSemanticHighlights()
+      if (!highlights) {
+        window.showWarningMessage("Failed to fetch semantic highlights")
+        return false
+      }
+
+      channel.appendLine("## Semantic highlighting for the buffer")
       channel.appendLine("")
-      const groups = await this.handler.getSemanticHighlightGroups()
-      if (!groups) return false
-      for (const group of groups) {
+      channel.appendLine(`The number of semantic tokens: ${highlights.length}`)
+      channel.appendLine("")
+      channel.appendLine("List of all semantic highlight groups:")
+      channel.appendLine("")
+      for (const [group] of highlights) {
         channel.appendLine(`- ${group}`)
       }
       channel.show()
