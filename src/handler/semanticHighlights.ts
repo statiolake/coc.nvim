@@ -52,12 +52,10 @@ export default class SemanticHighlights {
 
     const curr = await this.getHighlights(doc)
     if (!curr) return false
-    logger.debug(`got new highlights: ${JSON.stringify(curr)}`)
 
     const bufnr = doc.bufnr
 
     const prev = await this.vimGetCurrentHighlights(doc)
-    logger.debug(`got previous highlights: ${JSON.stringify(prev)}`)
     const highlightChanges = this.calculateHighlightUpdates(prev, curr)
     logger.debug(
       `Highlight updates: ${JSON.stringify(
@@ -189,18 +187,11 @@ export default class SemanticHighlights {
       (prev[prev.length - 1] || { line: 0 }).line,
       (curr[curr.length - 1] || { line: 0 }).line
     )
-    // logger.debug(
-    //   `curr: ${JSON.stringify(curr)} and prev: ${JSON.stringify(prev)}`
-    // )
-    // logger.debug(`the last highlighted lines: ${lastLine}`)
     const lineNumbersToUpdate: Set<number> = new Set()
     for (let i = 0; i <= lastLine; i++) {
       const ph = prevByLine.has(i)
       const ch = currByLine.has(i)
       if (ph !== ch) {
-        logger.debug(
-          `line ${i} needs update: this line is only appeared to one side`
-        )
         lineNumbersToUpdate.add(i)
         continue
       } else if (!ph && !ch) {
@@ -211,16 +202,12 @@ export default class SemanticHighlights {
       const cc = currByLine.get(i)
 
       if (pp.length !== cc.length) {
-        logger.debug(
-          `line ${i} needs update: the number of tokens are different`
-        )
         lineNumbersToUpdate.add(i)
         continue
       }
 
       for (let j = 0; j < pp.length; j++) {
         if (compare(pp[j], cc[j]) !== 0) {
-          logger.debug(`line ${i} needs update: some token differs.`)
           lineNumbersToUpdate.add(i)
           continue
         }
@@ -322,7 +309,7 @@ export default class SemanticHighlights {
             end
           } = prop
           if (start === 0 || end === 0) {
-            logger.debug(
+            logger.info(
               `multiline token found: ${JSON.stringify(prop)}. ignore it.`
             )
             continue
