@@ -10,7 +10,6 @@ import workspace from "../workspace"
 
 const logger = require("../util/logger")("documentSemanticHighlight")
 
-const SEMANTIC_HIGHLIGHTS_NAMESPACE: string = "ns-semantic-highlights"
 const SEMANTIC_HIGHLIGHTS_HLGROUP_PREFIX: string = "CocSem_"
 
 /**
@@ -51,37 +50,42 @@ export default class SemanticHighlights {
     if (!languages.hasProvider("semanticTokens", doc.textDocument)) return false
     if (!(await this.vimCheckFeatures())) return false
 
-    logger.debug("initial check OK")
+    // logger.debug("initial check OK")
 
     const curr = await this.getHighlights(doc)
     if (!curr) return false
 
-    logger.debug("getting new highlights finished")
+    // logger.debug("getting new highlights finished")
 
     const bufnr = doc.bufnr
 
     const prev = await this.vimGetCurrentHighlights(doc)
 
-    logger.debug("getting existing highlights finished")
+    // logger.debug("getting existing highlights finished")
 
     const highlightChanges = this.calculateHighlightUpdates(prev, curr)
-    logger.debug("calculating highlight changes finished")
-    // logger.debug(
-    //   `calculating highlight changes finished: updates ${JSON.stringify(
-    //     Object.fromEntries(highlightChanges)
-    //   )}`
-    // )
+    // logger.debug("calculating highlight changes finished")
+    logger.debug(
+      `calculating highlight changes finished: updates ${JSON.stringify(
+        Object.fromEntries(highlightChanges)
+      )}`
+    )
 
     // record, clear, and add highlights
     nvim.pauseNotification()
+
     this.vimPrepareHighlighting(doc)
-    logger.debug("preparing highlighting finished")
-    for (const [line, highlights] of highlightChanges) {
-      this.vimClearHighlights(doc, line)
-      for (const hl of highlights) this.vimAddHighlight(doc, hl)
-    }
-    logger.debug("adding highlights finished")
+    // logger.debug("preparing highlighting finished")
+
+    const groups = new Set(
+      [...highlightChanges.values()].flat().map(e => e.group)
+    )
+    await this.vimPrepareHighlightGroups(doc, [...groups])
+    // logger.debug("preparing highlight groups finished")
+
+    await this.vimAddHighlights(doc, highlightChanges)
     if (workspace.isVim) nvim.command("redraw", true)
+    // logger.debug("adding highlights finished")
 
     const res = nvim.resumeNotification()
     if (Array.isArray(res) && res[1] != null) {
@@ -265,134 +269,36 @@ export default class SemanticHighlights {
     }
   }
 
-  private async vimPrepareHighlightGroup(
+  private async vimPrepareHighlightGroups(
     doc: Document,
-    group: string
+    groups: string[]
   ): Promise<void> {
-    if (workspace.isVim) {
-      await this.nvim.call("prop_type_add", [
-        group,
-        { bufnr: doc.bufnr, highlight: group }
-      ])
-    }
+    await this.nvim.call("coc#semantic_highlight#prepare_highlight_groups", [
+      doc.bufnr,
+      groups
+    ])
   }
 
-  private async vimAddHighlight(
+  private async vimAddHighlights(
     doc: Document,
-    highlight: Highlight
+    highlights: Map<number, Highlight[]>
   ): Promise<void> {
-    const { group, line, startCharacter, endCharacter } = highlight
-    const readyHighlightGroups =
-      this.highlightGroups.get(doc.bufnr) || new Set()
-    if (!readyHighlightGroups.has(group)) {
-      await this.vimPrepareHighlightGroup(doc, group)
-    }
+    await this.nvim.call("coc#semantic_highlight#add_highlights", [
+      doc.bufnr,
+      Object.fromEntries(highlights)
+    ])
+  }
 
-    if (workspace.isNvim) {
-      const nsId = await this.nvim.call("nvim_create_namespace", [
-        SEMANTIC_HIGHLIGHTS_NAMESPACE
-      ])
-      await this.nvim.call("nvim_buf_add_highlight", [
-        doc.bufnr,
-        nsId,
-        group,
-        line,
-        startCharacter,
-        endCharacter
-      ])
-    } else if (workspace.isVim) {
-      await this.nvim.call("prop_add", [
-        line + 1,
-        startCharacter + 1,
-        {
-          end_lnum: line + 1,
-          end_col: endCharacter + 1,
-          bufnr: doc.bufnr,
-          type: group
-        }
-      ])
-    }
+  private async vimClearHighlights(doc: Document): Promise<void> {
+    return await this.nvim.call("coc#semantic_highlight#clear_highlights", [
+      doc.bufnr
+    ])
   }
 
   private async vimGetCurrentHighlights(doc: Document): Promise<Highlight[]> {
-    const res: Highlight[] = []
-    if (workspace.isVim) {
-      for (let line = 0; line < doc.lineCount; line++) {
-        const list = await this.nvim.call("prop_list", [
-          line + 1,
-          { bufnr: doc.bufnr }
-        ])
-        for (const prop of list) {
-          let {
-            type: group,
-            col: startCharacter,
-            length: length,
-            start,
-            end
-          } = prop
-          if (start === 0 || end === 0) {
-            logger.info(
-              `multiline token found: ${JSON.stringify(prop)}. ignore it.`
-            )
-            continue
-          }
-
-          startCharacter--
-          const endCharacter = startCharacter + length
-          res.push({ group, line, startCharacter, endCharacter })
-        }
-      }
-    } else if (workspace.isNvim) {
-      const nsId = await this.nvim.call("nvim_create_namespace", [
-        SEMANTIC_HIGHLIGHTS_NAMESPACE
-      ])
-      const marks = await this.nvim.call("nvim_buf_get_extmarks", [
-        doc.bufnr,
-        nsId,
-        0,
-        -1,
-        { details: true }
-      ])
-
-      for (const mark of marks) {
-        const [
-          ,
-          line,
-          startCharacter,
-          { hl_group: group, end_col: endCharacter }
-        ] = mark
-        res.push({ group, line, startCharacter, endCharacter })
-      }
-    }
-    return res
-  }
-
-  private async vimClearHighlights(
-    doc: Document,
-    line?: number
-  ): Promise<void> {
-    if (workspace.isVim) {
-      line++
-      const lineStart = line === undefined ? 1 : line
-      const lineEnd = line === undefined ? doc.lineCount : line
-      await this.nvim.call("prop_clear", [
-        lineStart,
-        lineEnd,
-        { bufnr: doc.bufnr }
-      ])
-    } else if (workspace.isNvim) {
-      const lineStart = line === undefined ? 0 : line
-      const lineEnd = line === undefined ? -1 : line + 1
-      const nsId = await this.nvim.call("nvim_create_namespace", [
-        SEMANTIC_HIGHLIGHTS_NAMESPACE
-      ])
-      await this.nvim.call("nvim_buf_clear_namespace", [
-        doc.bufnr,
-        nsId,
-        lineStart,
-        lineEnd
-      ])
-    }
+    return await this.nvim.call("coc#semantic_highlight#get_highlights", [
+      doc.bufnr
+    ])
   }
 
   private cancel(): void {
