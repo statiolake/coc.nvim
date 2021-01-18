@@ -49,27 +49,38 @@ export default class SemanticHighlights {
 
     if (!doc || !doc.attached) return false
     if (!languages.hasProvider("semanticTokens", doc.textDocument)) return false
+    if (!(await this.vimCheckFeatures())) return false
+
+    logger.debug("initial check OK")
 
     const curr = await this.getHighlights(doc)
     if (!curr) return false
 
+    logger.debug("getting new highlights finished")
+
     const bufnr = doc.bufnr
 
     const prev = await this.vimGetCurrentHighlights(doc)
+
+    logger.debug("getting existing highlights finished")
+
     const highlightChanges = this.calculateHighlightUpdates(prev, curr)
-    logger.debug(
-      `Highlight updates: ${JSON.stringify(
-        Object.fromEntries(highlightChanges)
-      )}`
-    )
+    logger.debug("calculating highlight changes finished")
+    // logger.debug(
+    //   `calculating highlight changes finished: updates ${JSON.stringify(
+    //     Object.fromEntries(highlightChanges)
+    //   )}`
+    // )
 
     // record, clear, and add highlights
     nvim.pauseNotification()
     this.vimPrepareHighlighting(doc)
+    logger.debug("preparing highlighting finished")
     for (const [line, highlights] of highlightChanges) {
       this.vimClearHighlights(doc, line)
       for (const hl of highlights) this.vimAddHighlight(doc, hl)
     }
+    logger.debug("adding highlights finished")
     if (workspace.isVim) nvim.command("redraw", true)
 
     const res = nvim.resumeNotification()
@@ -79,6 +90,7 @@ export default class SemanticHighlights {
       const groups = new Set(curr.map(e => e.group))
       this.highlightGroups.set(bufnr, groups)
     }
+    logger.debug("semantic highlighting finished")
 
     return true
   }
@@ -232,6 +244,16 @@ export default class SemanticHighlights {
       this.vimClearHighlights(doc)
     }
     this.highlightGroups.clear()
+  }
+
+  private async vimCheckFeatures(): Promise<boolean> {
+    if (workspace.isVim) {
+      return await this.nvim.call("has", ["textprop"])
+    } else if (workspace.isNvim) {
+      return await this.nvim.call("exists", ["*nvim_buf_add_highlight"])
+    } else {
+      return false
+    }
   }
 
   private async vimPrepareHighlighting(doc: Document): Promise<void> {
