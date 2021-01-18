@@ -1,19 +1,17 @@
 import { Neovim } from "@chemzqm/neovim"
 import {
   CancellationTokenSource,
-  Disposable,
-  Range
+  Disposable
 } from "vscode-languageserver-protocol"
 import languages from "../languages"
 import Document from "../model/document"
 import { disposeAll } from "../util"
 import workspace from "../workspace"
 
-const Diff = require("diff")
 const logger = require("../util/logger")("documentSemanticHighlight")
 
-const NS_SEMANTIC_HIGHLIGHTS: string = "ns-semantic-highlights"
-const HL_SEMANTIC_TOKENS_PREFIX: string = "CocSem_"
+const SEMANTIC_HIGHLIGHTS_NAMESPACE: string = "ns-semantic-highlights"
+const SEMANTIC_HIGHLIGHTS_HLGROUP_PREFIX: string = "CocSem_"
 
 /**
  * Relative highlight
@@ -26,12 +24,22 @@ interface RelativeHighlight {
 }
 
 /**
+ * highlight
+ */
+interface Highlight {
+  group: string
+  line: number // 0-indexed
+  startCharacter: number // 0-indexed
+  endCharacter: number // 0-indexed
+}
+
+/**
  * Semantic highlights for current buffer.
  */
 export default class SemanticHighlights {
   private disposables: Disposable[] = []
   private tokenSource: CancellationTokenSource = null
-  private highlights: Map<number, RelativeHighlight[]> = new Map()
+  private highlightGroups: Map<number, Set<string>> = new Map()
 
   constructor(private nvim: Neovim) {}
 
@@ -42,12 +50,14 @@ export default class SemanticHighlights {
     if (!doc || !doc.attached) return false
     if (!languages.hasProvider("semanticTokens", doc.textDocument)) return false
 
-    const curr = await this.getRelativeHighlights(doc)
+    const curr = await this.getHighlights(doc)
     if (!curr) return false
+    logger.debug(`got new highlights: ${JSON.stringify(curr)}`)
 
     const bufnr = doc.bufnr
 
-    const prev = this.highlights.has(bufnr) ? this.highlights.get(bufnr) : []
+    const prev = await this.vimGetCurrentHighlights(doc)
+    logger.debug(`got previous highlights: ${JSON.stringify(prev)}`)
     const highlightChanges = this.calculateHighlightUpdates(prev, curr)
     logger.debug(
       `Highlight updates: ${JSON.stringify(
@@ -57,11 +67,10 @@ export default class SemanticHighlights {
 
     // record, clear, and add highlights
     nvim.pauseNotification()
+    this.vimPrepareHighlighting(doc)
     for (const [line, highlights] of highlightChanges) {
-      doc.buffer.clearNamespace(NS_SEMANTIC_HIGHLIGHTS, line, line + 1)
-      for (const [group, range] of highlights) {
-        this.vimAddHighlight(doc, group, range)
-      }
+      this.vimClearHighlights(doc, line)
+      for (const hl of highlights) this.vimAddHighlight(doc, hl)
     }
     if (workspace.isVim) nvim.command("redraw", true)
 
@@ -69,22 +78,21 @@ export default class SemanticHighlights {
     if (Array.isArray(res) && res[1] != null) {
       logger.error("Error on highlight", res[1][2])
     } else {
-      this.highlights.set(bufnr, curr)
+      const groups = new Set(curr.map(e => e.group))
+      this.highlightGroups.set(bufnr, groups)
     }
 
     return true
   }
 
-  public async getHighlights(
-    doc: Document
-  ): Promise<[group: string, range: Range][]> {
+  public async getHighlights(doc: Document): Promise<Highlight[]> {
     if (!doc || !doc.attached) return null
     if (!languages.hasProvider("semanticTokens", doc.textDocument)) return null
 
     try {
       const relatives = await this.getRelativeHighlights(doc)
 
-      let res: [string, Range][] = []
+      let res: Highlight[] = []
       let currentLine = 0
       let currentCharacter = 0
       for (const {
@@ -98,11 +106,11 @@ export default class SemanticHighlights {
           deltaLine == 0
             ? currentCharacter + deltaStartCharacter
             : deltaStartCharacter
+        const endCharacter = startCharacter + length
         currentLine = line
         currentCharacter = startCharacter
-        const start = { line: line, character: startCharacter }
-        const end = { line: line, character: startCharacter + length }
-        res.push([group, { start, end }])
+
+        res.push({ group, line, startCharacter, endCharacter })
       }
 
       return res
@@ -132,7 +140,8 @@ export default class SemanticHighlights {
         // TODO: support tokenModifiers
         // const tokenModifiers = highlights.data[i + 4];
 
-        const group = HL_SEMANTIC_TOKENS_PREFIX + legend.tokenTypes[tokenType]
+        const group =
+          SEMANTIC_HIGHLIGHTS_HLGROUP_PREFIX + legend.tokenTypes[tokenType]
         res.push({
           group,
           deltaLine,
@@ -148,202 +157,232 @@ export default class SemanticHighlights {
   }
 
   public calculateHighlightUpdates(
-    prev: RelativeHighlight[],
-    curr: RelativeHighlight[]
-  ): Map<number, [string, Range][]> {
-    // Basically we need to update the added and removed part of highlights.
-    // Since Vim's textprop and Neovim's highlight features follow changes to
-    // line numbering (as lines are inserted/removed above the highlighted
-    // line), we only need to highlight newly inserted lines or existing lines
-    // whose highlights are changed.
-    //
-    // We can calculate highlights which need to be updated as follows:
-    //
-    // 1. Calculate differences of *relative* highlight positions (almost same
-    // with the response of semanticTokens) between the previously processed
-    // response and current resnponse. That will give us candidates of
-    // highlight changes.
-    //
-    // 2. Calculate line numbers to update.
-    //
-    // 3. Calculate the new highlights
-    //
-    // 4. Add extra lines to update (as described below).
-    //
-    //   We sometimes cannot determine which line is changed concretely. For
-    //   example,
-    //
-    //   line +1: +A +B
-    //   line +1:  A  B
-    //   line +1:  A  B
-    //
-    //   and
-    //
-    //   line +1:  A  B
-    //   line +1: +A +B
-    //   line +1:  A  B
-    //
-    //   and
-    //
-    //   line +1: +A +B -C -D
-    //   line +1: A B
-    //   line +1: A B
-    //
-    //   and so on.
-    //
-    //   (line +1 means deltaLine of the highlight is 1. A..D represents one
-    //   highlight information.)
-    //
-    //   are undeterminable. If the continuous multiple lines have the same
-    //   content as a result, we can do nothing other than updating all
-    //   possible lines.
-    //
-    // 5. Return final highlight update.
-
-    type ChangeObject = {
-      value: RelativeHighlight[] | RelativeHighlight
-      added: boolean
-      removed: boolean
-      count: number
-    }
-
-    // 1. Calculate differences of *relative* highlight positions
-    function relativeHighlightEquals(
-      a: RelativeHighlight,
-      b: RelativeHighlight
-    ): boolean {
-      if (!a || !b) return false
+    prev: Highlight[],
+    curr: Highlight[]
+  ): Map<number, Highlight[]> {
+    const stringCompare = Intl.Collator("en").compare
+    function compare(a: Highlight, b: Highlight): number {
       return (
-        a.group === b.group &&
-        a.deltaLine === b.deltaLine &&
-        a.deltaStartCharacter === b.deltaStartCharacter &&
-        a.length === b.length
+        a.line - b.line ||
+        a.startCharacter - b.startCharacter ||
+        a.endCharacter - b.endCharacter ||
+        stringCompare(a.group, b.group)
       )
     }
 
-    const diff: ChangeObject[] = Diff.diffArrays(prev, curr, {
-      comparator: relativeHighlightEquals
-    })
+    prev = prev.slice().sort(compare)
+    curr = curr.slice().sort(compare)
 
-    const summary = diff.map(
-      x => `${x.added ? "+" : x.removed ? "-" : "="}${x.count}`
+    const prevByLine: Map<number, Highlight[]> = new Map()
+    for (const hl of prev) {
+      if (!prevByLine.has(hl.line)) prevByLine.set(hl.line, [])
+      prevByLine.get(hl.line).push(hl)
+    }
+
+    const currByLine: Map<number, Highlight[]> = new Map()
+    for (const hl of curr) {
+      if (!currByLine.has(hl.line)) currByLine.set(hl.line, [])
+      currByLine.get(hl.line).push(hl)
+    }
+
+    const lastLine = Math.max(
+      (prev[prev.length - 1] || { line: 0 }).line,
+      (curr[curr.length - 1] || { line: 0 }).line
     )
-    logger.debug(`got diff: ${JSON.stringify(summary)}`)
-
-    // 2. Calculate line numbers to update.
+    // logger.debug(
+    //   `curr: ${JSON.stringify(curr)} and prev: ${JSON.stringify(prev)}`
+    // )
+    // logger.debug(`the last highlighted lines: ${lastLine}`)
     const lineNumbersToUpdate: Set<number> = new Set()
-    let currentLine = 0
-    for (const { value, added, removed } of diff) {
-      if (!Array.isArray(value)) return null
-      for (const { deltaLine } of value) {
-        const line = currentLine + deltaLine
-        if (added || removed) lineNumbersToUpdate.add(line)
-        if (!removed) currentLine = line
-      }
-    }
-
-    // 3. Calculate the new highlights
-    const highlights: Map<number, [group: string, range: Range][]> = new Map()
-    currentLine = 0
-    let currentCharacter = 0
-    for (const { group, deltaLine, deltaStartCharacter, length } of curr) {
-      const line = currentLine + deltaLine
-      const startCharacter =
-        deltaLine == 0
-          ? currentCharacter + deltaStartCharacter
-          : deltaStartCharacter
-      currentLine = line
-      currentCharacter = startCharacter
-      const start = { line: line, character: startCharacter }
-      const end = { line: line, character: startCharacter + length }
-
-      if (!highlights.has(line)) highlights.set(line, [])
-      highlights.get(line).push([group, { start, end }])
-    }
-    const lastLine = currentLine
-
-    // 4. Add extra lines to update (as described below).
-    function highlightsEquals(a: number, b: number): boolean {
-      function equals(
-        [ag, ar]: [string, Range],
-        [bg, br]: [string, Range]
-      ): boolean {
-        return (
-          ag === bg &&
-          ar.start.character === br.start.character &&
-          ar.end.character === br.end.character
+    for (let i = 0; i <= lastLine; i++) {
+      const ph = prevByLine.has(i)
+      const ch = currByLine.has(i)
+      if (ph !== ch) {
+        logger.debug(
+          `line ${i} needs update: this line is only appeared to one side`
         )
+        lineNumbersToUpdate.add(i)
+        continue
+      } else if (!ph && !ch) {
+        continue
       }
 
-      if (!highlights.has(a) || !highlights.has(b)) return false
-      const aa = highlights.get(a)
-      const bb = highlights.get(b)
+      const pp = prevByLine.get(i)
+      const cc = currByLine.get(i)
 
-      if (aa.length != bb.length) return false
-
-      const stringify = ([g, r]) =>
-        `${g}:${r.start.character}:${r.end.character}`
-      const aaa = aa.map(stringify).sort().join("+")
-      const bbb = bb.map(stringify).sort().join("+")
-      return aaa === bbb
-    }
-
-    for (const update of lineNumbersToUpdate.keys()) {
-      // backward
-      for (let i = update - 1; i >= 0; i--) {
-        // if i'th line is already registered as update, then the lines before
-        // i'th line are already checked.
-        if (lineNumbersToUpdate.has(i)) break
-
-        // if all of the entries are the same, then this line should be
-        // updated.
-        if (highlightsEquals(update, i)) {
-          lineNumbersToUpdate.add(i)
-        } else {
-          break
-        }
+      if (pp.length !== cc.length) {
+        logger.debug(
+          `line ${i} needs update: the number of tokens are different`
+        )
+        lineNumbersToUpdate.add(i)
+        continue
       }
 
-      // forward
-      for (let i = update + 1; i <= lastLine; i++) {
-        if (lineNumbersToUpdate.has(i)) break
-        if (highlightsEquals(update, i)) {
+      for (let j = 0; j < pp.length; j++) {
+        if (compare(pp[j], cc[j]) !== 0) {
+          logger.debug(`line ${i} needs update: some token differs.`)
           lineNumbersToUpdate.add(i)
-        } else {
-          break
+          continue
         }
       }
     }
 
-    return new Map(
-      [...highlights.entries()].filter(([line]) =>
-        lineNumbersToUpdate.has(line)
-      )
-    )
+    const res: Map<number, Highlight[]> = new Map()
+    for (const line of lineNumbersToUpdate) {
+      res.set(line, currByLine.get(line) || [])
+    }
+    return res
   }
 
   public hasHighlights(bufnr: number): boolean {
-    return this.highlights.has(bufnr)
+    return this.highlightGroups.has(bufnr)
   }
 
   public clearHighlights(): void {
-    if (this.highlights.size == 0) return
-    for (const bufnr of this.highlights.keys()) {
+    if (this.highlightGroups.size == 0) return
+    for (const bufnr of this.highlightGroups.keys()) {
       const doc = workspace.getDocument(bufnr)
       this.vimClearHighlights(doc)
     }
-    this.highlights.clear()
+    this.highlightGroups.clear()
   }
 
-  private vimAddHighlight(doc: Document, group: string, range: Range): void {
-    doc.buffer.highlightRanges(NS_SEMANTIC_HIGHLIGHTS, group, [range])
+  private async vimPrepareHighlighting(doc: Document): Promise<void> {
+    if (workspace.isVim) {
+      this.highlightGroups.set(
+        doc.bufnr,
+        new Set(await this.nvim.call("prop_type_list"))
+      )
+    }
   }
 
-  private vimClearHighlights(doc: Document, line?: number): void {
-    if (line) {
-      doc.buffer.clearNamespace(NS_SEMANTIC_HIGHLIGHTS, line, line + 1)
-    } else {
-      doc.buffer.clearNamespace(NS_SEMANTIC_HIGHLIGHTS)
+  private async vimPrepareHighlightGroup(
+    doc: Document,
+    group: string
+  ): Promise<void> {
+    if (workspace.isVim) {
+      await this.nvim.call("prop_type_add", [
+        group,
+        { bufnr: doc.bufnr, highlight: group }
+      ])
+    }
+  }
+
+  private async vimAddHighlight(
+    doc: Document,
+    highlight: Highlight
+  ): Promise<void> {
+    const { group, line, startCharacter, endCharacter } = highlight
+    const readyHighlightGroups =
+      this.highlightGroups.get(doc.bufnr) || new Set()
+    if (!readyHighlightGroups.has(group)) {
+      await this.vimPrepareHighlightGroup(doc, group)
+    }
+
+    if (workspace.isNvim) {
+      const nsId = await this.nvim.call("nvim_create_namespace", [
+        SEMANTIC_HIGHLIGHTS_NAMESPACE
+      ])
+      await this.nvim.call("nvim_buf_add_highlight", [
+        doc.bufnr,
+        nsId,
+        group,
+        line,
+        startCharacter,
+        endCharacter
+      ])
+    } else if (workspace.isVim) {
+      await this.nvim.call("prop_add", [
+        line + 1,
+        startCharacter + 1,
+        {
+          end_lnum: line + 1,
+          end_col: endCharacter + 1,
+          bufnr: doc.bufnr,
+          type: group
+        }
+      ])
+    }
+  }
+
+  private async vimGetCurrentHighlights(doc: Document): Promise<Highlight[]> {
+    const res: Highlight[] = []
+    if (workspace.isVim) {
+      for (let line = 0; line < doc.lineCount; line++) {
+        const list = await this.nvim.call("prop_list", [
+          line + 1,
+          { bufnr: doc.bufnr }
+        ])
+        for (const prop of list) {
+          let {
+            type: group,
+            col: startCharacter,
+            length: length,
+            start,
+            end
+          } = prop
+          if (start === 0 || end === 0) {
+            logger.debug(
+              `multiline token found: ${JSON.stringify(prop)}. ignore it.`
+            )
+            continue
+          }
+
+          startCharacter--
+          const endCharacter = startCharacter + length
+          res.push({ group, line, startCharacter, endCharacter })
+        }
+      }
+    } else if (workspace.isNvim) {
+      const nsId = await this.nvim.call("nvim_create_namespace", [
+        SEMANTIC_HIGHLIGHTS_NAMESPACE
+      ])
+      const marks = await this.nvim.call("nvim_buf_get_extmarks", [
+        doc.bufnr,
+        nsId,
+        0,
+        -1,
+        { details: true }
+      ])
+
+      for (const mark of marks) {
+        const [
+          ,
+          line,
+          startCharacter,
+          { hl_group: group, end_col: endCharacter }
+        ] = mark
+        res.push({ group, line, startCharacter, endCharacter })
+      }
+    }
+    return res
+  }
+
+  private async vimClearHighlights(
+    doc: Document,
+    line?: number
+  ): Promise<void> {
+    if (workspace.isVim) {
+      line++
+      const lineStart = line === undefined ? 1 : line
+      const lineEnd = line === undefined ? doc.lineCount : line
+      await this.nvim.call("prop_clear", [
+        lineStart,
+        lineEnd,
+        { bufnr: doc.bufnr }
+      ])
+    } else if (workspace.isNvim) {
+      const lineStart = line === undefined ? 0 : line
+      const lineEnd = line === undefined ? -1 : line + 1
+      const nsId = await this.nvim.call("nvim_create_namespace", [
+        SEMANTIC_HIGHLIGHTS_NAMESPACE
+      ])
+      await this.nvim.call("nvim_buf_clear_namespace", [
+        doc.bufnr,
+        nsId,
+        lineStart,
+        lineEnd
+      ])
     }
   }
 
@@ -357,7 +396,7 @@ export default class SemanticHighlights {
 
   public dispose(): void {
     this.clearHighlights()
-    this.highlights.clear()
+    this.highlightGroups.clear()
     this.cancel()
     disposeAll(this.disposables)
   }
