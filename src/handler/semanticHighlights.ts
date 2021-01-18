@@ -60,7 +60,7 @@ export default class SemanticHighlights {
     for (const [line, highlights] of highlightChanges) {
       doc.buffer.clearNamespace(NS_SEMANTIC_HIGHLIGHTS, line, line + 1)
       for (const [group, range] of highlights) {
-        doc.buffer.highlightRanges(NS_SEMANTIC_HIGHLIGHTS, group, [range])
+        this.vimAddHighlight(doc, group, range)
       }
     }
     if (workspace.isVim) nvim.command("redraw", true)
@@ -329,10 +329,22 @@ export default class SemanticHighlights {
   public clearHighlights(): void {
     if (this.highlights.size == 0) return
     for (const bufnr of this.highlights.keys()) {
-      const buf = this.nvim.createBuffer(bufnr)
-      buf.clearNamespace(NS_SEMANTIC_HIGHLIGHTS)
+      const doc = workspace.getDocument(bufnr)
+      this.vimClearHighlights(doc)
     }
     this.highlights.clear()
+  }
+
+  private vimAddHighlight(doc: Document, group: string, range: Range): void {
+    doc.buffer.highlightRanges(NS_SEMANTIC_HIGHLIGHTS, group, [range])
+  }
+
+  private vimClearHighlights(doc: Document, line?: number): void {
+    if (line) {
+      doc.buffer.clearNamespace(NS_SEMANTIC_HIGHLIGHTS, line, line + 1)
+    } else {
+      doc.buffer.clearNamespace(NS_SEMANTIC_HIGHLIGHTS)
+    }
   }
 
   private cancel(): void {
