@@ -38,7 +38,7 @@ interface Highlight {
 export default class SemanticHighlights {
   private disposables: Disposable[] = []
   private tokenSource: CancellationTokenSource = null
-  private highlightGroups: Map<number, Set<string>> = new Map()
+  private highlightedBuffers: Set<number> = new Set()
 
   constructor(private nvim: Neovim) {}
 
@@ -50,21 +50,11 @@ export default class SemanticHighlights {
     if (!languages.hasProvider("semanticTokens", doc.textDocument)) return false
     if (!(await this.vimCheckFeatures())) return false
 
-    // logger.debug("initial check OK")
-
     const curr = await this.getHighlights(doc)
+    const prev = await this.vimGetCurrentHighlights(doc)
     if (!curr) return false
 
-    // logger.debug("getting new highlights finished")
-
-    const bufnr = doc.bufnr
-
-    const prev = await this.vimGetCurrentHighlights(doc)
-
-    // logger.debug("getting existing highlights finished")
-
     const highlightChanges = this.calculateHighlightUpdates(prev, curr)
-    // logger.debug("calculating highlight changes finished")
     logger.debug(
       `calculating highlight changes finished: updates ${JSON.stringify(
         Object.fromEntries(highlightChanges)
@@ -72,28 +62,9 @@ export default class SemanticHighlights {
     )
 
     // record, clear, and add highlights
-    nvim.pauseNotification()
+    await this.updateHighlights(doc, highlightChanges)
+    this.highlightedBuffers.add(doc.bufnr)
 
-    this.vimPrepareHighlighting(doc)
-    // logger.debug("preparing highlighting finished")
-
-    const groups = new Set(
-      [...highlightChanges.values()].flat().map(e => e.group)
-    )
-    await this.vimPrepareHighlightGroups(doc, [...groups])
-    // logger.debug("preparing highlight groups finished")
-
-    await this.vimAddHighlights(doc, highlightChanges)
-    if (workspace.isVim) nvim.command("redraw", true)
-    // logger.debug("adding highlights finished")
-
-    const res = nvim.resumeNotification()
-    if (Array.isArray(res) && res[1] != null) {
-      logger.error("Error on highlight", res[1][2])
-    } else {
-      const groups = new Set(curr.map(e => e.group))
-      this.highlightGroups.set(bufnr, groups)
-    }
     logger.debug("semantic highlighting finished")
 
     return true
@@ -105,7 +76,6 @@ export default class SemanticHighlights {
 
     try {
       const relatives = await this.getRelativeHighlights(doc)
-
       let res: Highlight[] = []
       let currentLine = 0
       let currentCharacter = 0
@@ -123,7 +93,6 @@ export default class SemanticHighlights {
         const endCharacter = startCharacter + length
         currentLine = line
         currentCharacter = startCharacter
-
         res.push({ group, line, startCharacter, endCharacter })
       }
 
@@ -238,16 +207,38 @@ export default class SemanticHighlights {
   }
 
   public hasHighlights(bufnr: number): boolean {
-    return this.highlightGroups.has(bufnr)
+    return this.highlightedBuffers.has(bufnr)
   }
 
   public clearHighlights(): void {
-    if (this.highlightGroups.size == 0) return
-    for (const bufnr of this.highlightGroups.keys()) {
+    if (this.highlightedBuffers.size == 0) return
+    for (const bufnr of this.highlightedBuffers) {
       const doc = workspace.getDocument(bufnr)
       this.vimClearHighlights(doc)
     }
-    this.highlightGroups.clear()
+    this.highlightedBuffers.clear()
+  }
+
+  private async updateHighlights(
+    doc: Document,
+    highlights: Map<number, Highlight[]>
+  ): Promise<void> {
+    if (workspace.isVim) {
+      const newGroups = [...highlights.values()].flat().map((e) => e.group)
+      const registered = new Set(await this.nvim.call("prop_type_list"))
+      const groupsToRegister = newGroups.filter((g) => !registered.has(g))
+      await this.nvim.call("coc#semantic_highlight#prepare_highlight_groups", [
+        doc.bufnr,
+        groupsToRegister
+      ])
+    }
+
+    await this.nvim.call("coc#semantic_highlight#add_highlights", [
+      doc.bufnr,
+      Object.fromEntries(highlights)
+    ])
+
+    if (workspace.isVim) this.nvim.command("redraw", true)
   }
 
   private async vimCheckFeatures(): Promise<boolean> {
@@ -258,35 +249,6 @@ export default class SemanticHighlights {
     } else {
       return false
     }
-  }
-
-  private async vimPrepareHighlighting(doc: Document): Promise<void> {
-    if (workspace.isVim) {
-      this.highlightGroups.set(
-        doc.bufnr,
-        new Set(await this.nvim.call("prop_type_list"))
-      )
-    }
-  }
-
-  private async vimPrepareHighlightGroups(
-    doc: Document,
-    groups: string[]
-  ): Promise<void> {
-    await this.nvim.call("coc#semantic_highlight#prepare_highlight_groups", [
-      doc.bufnr,
-      groups
-    ])
-  }
-
-  private async vimAddHighlights(
-    doc: Document,
-    highlights: Map<number, Highlight[]>
-  ): Promise<void> {
-    await this.nvim.call("coc#semantic_highlight#add_highlights", [
-      doc.bufnr,
-      Object.fromEntries(highlights)
-    ])
   }
 
   private async vimClearHighlights(doc: Document): Promise<void> {
@@ -311,7 +273,7 @@ export default class SemanticHighlights {
 
   public dispose(): void {
     this.clearHighlights()
-    this.highlightGroups.clear()
+    this.highlightedBuffers.clear()
     this.cancel()
     disposeAll(this.disposables)
   }
