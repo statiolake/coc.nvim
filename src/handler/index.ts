@@ -613,16 +613,24 @@ export default class Handler {
   }
 
   public async semanticHighlight(): Promise<boolean> {
-    const { doc } = await this.getCurrentState()
-    if (!doc) return false
+    const bufnr = await this.nvim.eval(`bufnr('%')`) as number
+    const doc = workspace.getDocument(bufnr)
+    if (!doc || !doc.attached) return false
+    if (!languages.hasProvider("semanticTokens", doc.textDocument)) {
+      return false
+    }
 
     synchronizeDocument(doc)
     return await this.documentSemanticHighlighter.semanticHighlight(doc)
   }
 
   public async getSemanticHighlights(): Promise<Highlight[]> {
-    const { doc } = await this.getCurrentState()
-    if (!doc) return null
+    const bufnr = await this.nvim.eval(`bufnr('%')`) as number
+    const doc = workspace.getDocument(bufnr)
+    if (!doc || !doc.attached) return null
+    if (!languages.hasProvider("semanticTokens", doc.textDocument)) {
+      return null
+    }
 
     synchronizeDocument(doc)
     return await this.documentSemanticHighlighter
