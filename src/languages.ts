@@ -638,9 +638,9 @@ class Languages {
           let isSnippet = await this.applyTextEdit(item, opt)
           let { additionalTextEdits } = item
           if (additionalTextEdits && item.textEdit) {
-            let r = InsertReplaceEdit.is(item.textEdit) ? item.textEdit.replace : item.textEdit.range
+            let r = InsertReplaceEdit.is(item.textEdit) ? item.textEdit.insert : item.textEdit.range
             additionalTextEdits = additionalTextEdits.filter(edit => {
-              let er = InsertReplaceEdit.is(edit) ? edit.replace : edit.range
+              let er = InsertReplaceEdit.is(edit) ? edit.insert : edit.range
               if (rangeOverlap(r, er)) {
                 logger.error('Filtered overlap additionalTextEdit:', edit)
                 return false
@@ -680,7 +680,7 @@ class Languages {
     let doc = workspace.getDocument(bufnr)
     if (!doc) return false
     let newText = textEdit.newText
-    let range = InsertReplaceEdit.is(textEdit) ? textEdit.replace : textEdit.range
+    let range = InsertReplaceEdit.is(textEdit) ? textEdit.insert : textEdit.range
     let isSnippet = item.insertTextFormat === InsertTextFormat.Snippet
     // replace inserted word
     let start = line.substr(0, range.start.character)
@@ -730,7 +730,7 @@ class Languages {
     let first = items[0]
     if (!first.textEdit) return null
     let { newText } = first.textEdit
-    let range = InsertReplaceEdit.is(first.textEdit) ? first.textEdit.replace : first.textEdit.range
+    let range = InsertReplaceEdit.is(first.textEdit) ? first.textEdit.insert : first.textEdit.range
     let { character } = range.start
     if (newText.length < range.end.character - character) {
       return null
@@ -740,7 +740,7 @@ class Languages {
       if (!o) break
       if (!o.textEdit) return null
       if (InsertReplaceEdit.is(o.textEdit)) return null
-      let r = InsertReplaceEdit.is(o.textEdit) ? o.textEdit.replace : o.textEdit.range
+      let r = InsertReplaceEdit.is(o.textEdit) ? o.textEdit.insert : o.textEdit.range
       if (r.start.character !== character) return null
     }
     return byteIndex(line, character)
