@@ -152,3 +152,90 @@ function coc_highlight_update_all(bufnr, key, ns, new_highlights, first, last)
     end
   end
 end
+
+function coc_highlight_ranges(bufnr, synmaxcol, srcId, hlGroup, ranges)
+  local getbufline = vim.fn.getbufline
+  local empty = vim.fn.empty
+  local strlen = vim.fn.strlen
+  local strcharpart = vim.fn.strcharpart
+
+  for i = 1, #ranges do
+    local range = ranges[i]
+    local first = range['start']
+    local last = range['end']
+    for lnum = first + 1, last + 1 do
+      local arr = getbufline(bufnr, lnum)
+      local line = ''
+      if #arr >= 1 then
+        line = arr[0]
+      end
+
+      if empty(line) then goto continue end
+      if first['character'] > synmaxcol or last['character'] > synmaxcol then
+        goto continue
+      end
+
+      -- TODO How to count UTF16 code point?
+      local colStart = 0
+      if lnum == first['line'] + 1 then
+        colStart = strlen(strcharpart(line, 0, first['character']))
+      end
+      local colEnd = -1
+      if lnum == last['line'] + 1 then
+        colEnd = strlen(strcharpart(line, 0, last['character']))
+      end
+      if colStart == colEnd then
+        goto continue
+      end
+
+      coc_highlight_add_highlight(
+        bufnr, srcId, hlGroup, lnum - 1, colStart, colEnd)
+
+      ::continue::
+    end
+  end
+end
+
+function coc_highlight_add_highlight(bufnr, srcId, hlGroup, line, colStart, colEnd)
+  local type = 'CocHighlight' .. hlGroup
+  if vim.fn.empty(vim.fn.prop_type_get(type)) then
+    vim.fn.prop_type_add(type, vim.dict({highlight = hlGroup, combine = 1}))
+  end
+
+  local total = vim.fn.strlen(vim.fn.getbufline(bufnr, line + 1)[0])
+  local last = colEnd
+  if last == -1 then
+    last = total
+  else
+    last = math.min(last, total)
+  end
+  if last <= colStart then
+    return
+  end
+
+  -- find unused srcId
+  if srcId == 0 then
+    while true do
+      srcId = srcId + 1
+      if vim.fn.empty(
+        vim.fn.prop_find(vim.dict({id = coc_highlight_prop_offset + srcId, lnum = 1 }))) then
+        break
+      end
+    end
+  end
+
+  local id = 0
+  if srcId ~= -1 then
+    id = coc_highlight_prop_offset + srcId
+  end
+
+  vim.fn.prop_add(line + 1, colStart + 1, vim.dict({
+    length = last - colStart,
+    bufnr = bufnr,
+    type = type,
+    id = id,
+  }))
+
+  -- Return (possibly generated) srcId
+  return srcId
+end
