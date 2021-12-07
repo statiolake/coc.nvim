@@ -13,6 +13,11 @@ if has('nvim-0.5.0')
   endtry
 endif
 
+" If there is lua support for Vim, use it for performance.
+if has('lua') && exists('*prop_list')
+  execute 'luafile ' . expand('<sfile>:p:h') . '/highlight_vim.lua'
+end
+
 " Get namespaced coc highlights from range of bufnr
 " start - 0 based start line index
 " end - 0 based end line index, could be -1 for last line (exclusive)
@@ -53,21 +58,28 @@ function! coc#highlight#get(bufnr, key, start, end) abort
     let id = s:prop_offset + ns
     " we could only get textprops line by line
     let end = a:end == -1 ? getbufinfo(a:bufnr)[0]['linecount'] : a:end
-    for line in range(a:start + 1, end)
-      let items = []
-      for prop in prop_list(line, {'bufnr': a:bufnr, 'id': id})
-        " vim have support for cross line text props, but we're not using
-        call add(items, {
-              \ 'hlGroup': s:prop_type_hlgroup(prop['type']),
-              \ 'lnum': line - 1,
-              \ 'colStart': prop['col'] - 1,
-              \ 'colEnd': prop['col'] - 1 + prop['length'] - (prop['end'] == 0 ? 1 : 0),
-              \ })
+
+    if has('lua')
+      let current = luaeval(
+        \ 'coc_highlight_prop_get_all(_A.bufnr, _A.id, _A.first, _A.last)',
+        \ {'bufnr': a:bufnr, 'id': id, 'first': a:start, 'last': end})
+    else
+      for line in range(a:start + 1, end)
+        let items = []
+        for prop in prop_list(line, {'bufnr': a:bufnr, 'id': id})
+          " vim have support for cross line text props, but we're not using
+          call add(items, {
+                \ 'hlGroup': s:prop_type_hlgroup(prop['type']),
+                \ 'lnum': line - 1,
+                \ 'colStart': prop['col'] - 1,
+                \ 'colEnd': prop['col'] - 1 + prop['length'] - (prop['end'] == 0 ? 1 : 0),
+                \ })
+        endfor
+        if !empty(items)
+          let current[string(line - 1)] = items
+        endif
       endfor
-      if !empty(items)
-        let current[string(line - 1)] = items
-      endif
-    endfor
+    endif
   endif
   return current
 endfunction
@@ -92,55 +104,61 @@ function! coc#highlight#update_highlights(bufnr, key, highlights, ...) abort
   let exists = []
   let ns = coc#highlight#create_namespace(a:key)
   let currIndex = 0
-  if has('nvim-0.5.0') || exists('*prop_list')
-    let current = coc#highlight#get(bufnr, a:key, start, end)
-    for lnum in sort(map(keys(current), 'str2nr(v:val)'), {a, b -> a - b})
-      let items = current[lnum]
-      let indexes = []
-      let nextIndex = currIndex
-      if currIndex != total
-        for item in items
-          for i in range(currIndex, total - 1)
-            let hi = a:highlights[i]
-            if hi['lnum'] > item['lnum']
-              let nextIndex = i
-              break
-            endif
-            if coc#helper#obj_equal(item, hi)
-              call add(indexes, i)
-              let nextIndex = max([nextIndex, i + 1])
-            endif
-          endfor
-        endfor
-      endif
-      let currIndex = nextIndex
-      " all highlights of current line exists, not clear.
-      if len(indexes) == len(items)
-        let exists = exists + indexes
-      else
-        if has('nvim')
-          call nvim_buf_clear_namespace(bufnr, ns, lnum, lnum + 1)
-        else
-          call coc#api#call('buf_clear_namespace', [bufnr, ns, lnum, lnum + 1])
-        endif
-      endif
-    endfor
-    if has('nvim') && end == -1
-      let count = nvim_buf_line_count(bufnr)
-      " remove highlights exceed last line.
-      call nvim_buf_clear_namespace(bufnr, ns, count, -1)
-    endif
+  if has('lua')
+    lua coc_highlight_update_all(
+      \ vim.eval('a:bufnr'), vim.eval('a:key'), vim.eval('ns'),
+      \ vim.eval('a:highlights'), vim.eval('start'), vim.eval('end'))
   else
-    call coc#highlight#clear_highlight(bufnr, a:key, start, end)
+    if has('nvim-0.5.0') || exists('*prop_list')
+      let current = coc#highlight#get(bufnr, a:key, start, end)
+      for lnum in sort(map(keys(current), 'str2nr(v:val)'), {a, b -> a - b})
+        let items = current[lnum]
+        let indexes = []
+        let nextIndex = currIndex
+        if currIndex != total
+          for item in items
+            for i in range(currIndex, total - 1)
+              let hi = a:highlights[i]
+              if hi['lnum'] > item['lnum']
+                let nextIndex = i
+                break
+              endif
+              if coc#helper#obj_equal(item, hi)
+                call add(indexes, i)
+                let nextIndex = max([nextIndex, i + 1])
+              endif
+            endfor
+          endfor
+        endif
+        let currIndex = nextIndex
+        " all highlights of current line exists, not clear.
+        if len(indexes) == len(items)
+          let exists = exists + indexes
+        else
+          if has('nvim')
+            call nvim_buf_clear_namespace(bufnr, ns, lnum, lnum + 1)
+          else
+            call coc#api#call('buf_clear_namespace', [bufnr, ns, lnum, lnum + 1])
+          endif
+        endif
+      endfor
+      if has('nvim') && end == -1
+        let count = nvim_buf_line_count(bufnr)
+        " remove highlights exceed last line.
+        call nvim_buf_clear_namespace(bufnr, ns, count, -1)
+      endif
+    else
+      call coc#highlight#clear_highlight(bufnr, a:key, start, end)
+    endif
+    let indexes = range(0, total - 1)
+    if !empty(exists)
+      let indexes = filter(indexes, 'index(exists, v:val) == -1')
+    endif
+    for i in indexes
+      let hi = a:highlights[i]
+      call coc#highlight#add_highlight(bufnr, ns, hi['hlGroup'], hi['lnum'], hi['colStart'], hi['colEnd'])
+    endfor
   endif
-  let indexes = range(0, total - 1)
-  if !empty(exists)
-    let indexes = filter(indexes, 'index(exists, v:val) == -1')
-  endif
-  for i in indexes
-    let hi = a:highlights[i]
-    call coc#highlight#add_highlight(bufnr, ns, hi['hlGroup'], hi['lnum'], hi['colStart'], hi['colEnd'])
-  endfor
 endfunction
 
 function! coc#highlight#get_highlights(bufnr, key) abort
@@ -151,22 +169,30 @@ function! coc#highlight#get_highlights(bufnr, key) abort
   let ns = s:namespace_map[a:key]
   if exists('*prop_list')
     let lines = getbufline(a:bufnr, 1, '$')
-    let linecount = len(lines)
-    for line in range(1, linecount)
-      for prop in prop_list(line, {'bufnr': a:bufnr, 'id': s:prop_offset + ns})
-        if prop['start'] == 0 || prop['end'] == 0
-          " multi line tokens are not supported; simply ignore it
-          continue
-        endif
-        let text = lines[line - 1]
-        call add(res, {
-              \   'hlGroup': s:prop_type_hlgroup(prop['type']),
-              \   'lnum': line - 1,
-              \   'colStart': coc#helper#get_charactor(text, prop['col']),
-              \   'colEnd': coc#helper#get_charactor(text, prop['col'] + prop['length'])
-              \ })
+    if has('lua')
+      let res = luaeval('coc_highlight_get_all_highlights(_A.bufnr, _A.ns, _A.lines)', {
+        \   'bufnr': a:bufnr,
+        \   'ns': ns,
+        \   'lines': lines,
+        \ })
+    else
+      let linecount = len(lines)
+      for line in range(1, linecount)
+        for prop in prop_list(line, {'bufnr': a:bufnr, 'id': s:prop_offset + ns})
+          if prop['start'] == 0 || prop['end'] == 0
+            " multi line tokens are not supported; simply ignore it
+            continue
+          endif
+          let text = lines[line - 1]
+          call add(res, {
+                \   'hlGroup': s:prop_type_hlgroup(prop['type']),
+                \   'lnum': line - 1,
+                \   'colStart': coc#helper#get_charactor(text, prop['col']),
+                \   'colEnd': coc#helper#get_charactor(text, prop['col'] + prop['length'])
+                \ })
+        endfor
       endfor
-    endfor
+    end
   elseif has('nvim-0.5.0')
     let markers = nvim_buf_get_extmarks(a:bufnr, ns, 0, -1, {'details': v:true})
     let lines = getbufline(a:bufnr, 1, '$')
