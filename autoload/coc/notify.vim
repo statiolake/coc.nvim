@@ -48,7 +48,7 @@ function! coc#notify#copy() abort
     endif
   endfor
   if empty(lines)
-    echohl WarningMsg | echon 'No content to copy' | echohl None
+    call coc#ui#echo_messages('WarningMsg', ['No content to copy'])
     return
   endif
   call setreg('*', join(lines, "\n"))

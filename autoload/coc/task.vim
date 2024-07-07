@@ -38,7 +38,7 @@ function! coc#task#start(id, opts)
     let job = job_start(cmd, options)
     let status = job_status(job)
     if status !=# 'run'
-      echohl Error | echom 'Failed to start '.a:id.' task' | echohl None
+      call coc#ui#echo_messages('Error', ['Failed to start '.a:id.' task'])
       return v:false
     endif
     let s:running_task[a:id] = job
@@ -56,7 +56,7 @@ function! coc#task#start(id, opts)
     endif
     let chan_id = jobstart(cmd, options)
     if chan_id <= 0
-      echohl Error | echom 'Failed to start '.a:id.' task' | echohl None
+      call coc#ui#echo_messages('Error', ['Failed to start '.a:id.' task'])
       return v:false
     endif
     let s:running_task[a:id] = chan_id
@@ -75,7 +75,7 @@ function! coc#task#stop(id)
   sleep 50m
   let running = coc#task#running(a:id)
   if running
-    echohl Error | echom 'job '.a:id. ' stop failed.' | echohl None
+    call coc#ui#echo_messages('Error', ['job '.a:id. ' stop failed.'])
   endif
 endfunction
 

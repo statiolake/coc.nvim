@@ -37,7 +37,7 @@ function! coc#util#change_info() abort
 endfunction
 
 function! coc#util#jumpTo(line, character) abort
-  echohl WarningMsg | echon 'coc#util#jumpTo is deprecated, use coc#cursor#move_to instead.' | echohl None
+  call coc#ui#echo_messages('WarningMsg', ['coc#util#jumpTo is deprecated, use coc#cursor#move_to instead.'])
   call coc#cursor#move_to(a:line, a:character)
 endfunction
 
@@ -63,9 +63,7 @@ endfunction
 
 function! coc#util#path_replace_patterns() abort
   if has('win32unix') && exists('g:coc_cygqwin_path_prefixes')
-    echohl WarningMsg
-    echon 'g:coc_cygqwin_path_prefixes is deprecated, use g:coc_uri_prefix_replace_patterns instead'
-    echohl None
+    call coc#ui#echo_messages('WarningMsg', ['g:coc_cygqwin_path_prefixes is deprecated, use g:coc_uri_prefix_replace_patterns instead'])
     return g:coc_cygqwin_path_prefixes
   endif
   if exists('g:coc_uri_prefix_replace_patterns')
@@ -130,14 +128,14 @@ function! coc#util#job_command()
     let node = $COC_NODE_PATH == '' ? 'node' : $COC_NODE_PATH
   endif
   if !executable(node)
-    echohl Error | echom '[coc.nvim] "'.node.'" is not executable, checkout https://nodejs.org/en/download/' | echohl None
+    call coc#ui#echo_message('Error', ['[coc.nvim] "'.node.'" is not executable, checkout https://nodejs.org/en/download/'])
     return
   endif
   if !filereadable(s:root.'/build/index.js')
     if isdirectory(s:root.'/src')
-      echohl Error | echom '[coc.nvim] build/index.js not found, please install dependencies and compile coc.nvim by: npm ci' | echohl None
+      call coc#ui#echo_messages('Error', ['[coc.nvim] build/index.js not found, please install dependencies and compile coc.nvim by: npm ci'])
     else
-      echohl Error | echon '[coc.nvim] your coc.nvim is broken.' | echohl None
+      call coc#ui#echo_messages('Error', ['[coc.nvim] your coc.nvim is broken.'])
     endif
     return
   endif

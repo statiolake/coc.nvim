@@ -61,7 +61,7 @@ endfunction
 " cmd, cwd
 function! coc#ui#open_terminal(opts) abort
   if s:is_vim && !exists('*term_start')
-    echohl WarningMsg | echon "Your vim doesn't have terminal support!" | echohl None
+    call coc#ui#echo_messages('WarningMsg', ["Your vim doesn't have terminal support!"])
     return
   endif
   if get(a:opts, 'position', 'bottom') ==# 'bottom'
@@ -141,7 +141,10 @@ function! coc#ui#echo_hover(msg)
   let g:coc_last_hover_message = a:msg
 endfunction
 
-function! coc#ui#echo_messages(hl, msgs)
+" The last optional argument is record_history --- default to 0
+function! coc#ui#echo_messages(hl, msgs, ...)
+  let record_history = get(a:, 1, 0)
+
   if a:hl !~# 'Error' && (mode() !~# '\v^(i|n)$')
     return
   endif
@@ -149,8 +152,10 @@ function! coc#ui#echo_messages(hl, msgs)
   if empty(msgs)
     return
   endif
+
+  let cmd = record_history ? 'echom' : 'echon'
   execute 'echohl '.a:hl
-  echo join(msgs, "\n")
+  execute cmd.' join(msgs, "\n")'
   echohl None
 endfunction
 
@@ -256,7 +261,7 @@ endfunction
 function! s:system(cmd)
   let output = system(a:cmd)
   if v:shell_error && output !=# ""
-    echohl Error | echom output | echohl None
+    call coc#ui#echo_messages('Error', split(output, "\n"))
     return
   endif
   return output
@@ -345,7 +350,7 @@ function! coc#ui#open_url(url)
   endif
   call system('cmd /c start "" /b '. substitute(a:url, '&', '^&', 'g'))
   if v:shell_error
-    echohl Error | echom 'Failed to open '.a:url | echohl None
+    call coc#ui#echo_messages('Error', ['Failed to open '.a:url])
     return
   endif
 endfunction

@@ -5,7 +5,7 @@ let s:is_win = has("win32") || has("win64")
 let s:clients = {}
 
 if get(g:, 'node_client_debug', 0)
-  echohl WarningMsg | echo '[coc.nvim] Enable g:node_client_debug could impact your vim experience' | echohl None
+  call coc#ui#echo_messages('WarningMsg', ['[coc.nvim] Enable g:node_client_debug could impact your vim experience' ])
   let $NODE_CLIENT_LOG_LEVEL = 'debug'
   if exists('$NODE_CLIENT_LOG_FILE')
     let s:logfile = resolve($NODE_CLIENT_LOG_FILE)
@@ -47,7 +47,7 @@ function! s:start() dict
     if get(g:, 'node_client_debug', 0)
       let file = tmpdir . '/coc.log'
       call ch_logfile(file, 'w')
-      echohl MoreMsg | echo '[coc.nvim] channel log to '.file | echohl None
+      call coc#ui#echo_messages('MoreMsg', ['[coc.nvim] channel log to '.file])
     endif
     let options = {
           \ 'noblock': 1,
@@ -66,7 +66,7 @@ function! s:start() dict
     let status = job_status(job)
     if status !=# 'run'
       let self.running = 0
-      echohl Error | echom 'Failed to start '.self.name.' service' | echohl None
+      call coc#ui#echo_messages('Error', ['Failed to start '.self.name.' service'], 1)
       return
     endif
     let self['running'] = 1
@@ -80,7 +80,7 @@ function! s:start() dict
           \ }
     let chan_id = jobstart(self.command, opts)
     if chan_id <= 0
-      echohl Error | echom 'Failed to start '.self.name.' service' | echohl None
+      call coc#ui#echo_messages('Error', ['Failed to start '.self.name.' service'], 1)
       return
     endif
     let self['chan_id'] = chan_id
@@ -136,7 +136,7 @@ function! s:on_exit(name, code) abort
   let client['channel'] = v:null
   let client['async_req_id'] = 1
   if a:code != 0 && a:code != 143 && a:code != -1
-    echohl Error | echom 'client '.a:name. ' abnormal exit with: '.a:code | echohl None
+    call coc#ui#echo_messages('Error', ['client '.a:name. ' abnormal exit with: '.a:code])
   endif
 endfunction
 
@@ -172,7 +172,7 @@ function! s:request(method, args) dict
   catch /.*/
     if v:exception =~# 'E475'
       if get(g:, 'coc_vim_leaving', 0) | return | endif
-      echohl Error | echom '['.self.name.'] server connection lost' | echohl None
+      call coc#ui#echo_messages('Error', ['['.self.name.'] server connection lost'])
       let name = self.name
       call s:on_exit(name, 0)
       execute 'silent do User ConnectionLost'.toupper(name[0]).name[1:]
@@ -204,14 +204,14 @@ function! s:notify(method, args) dict
       if get(g:, 'coc_vim_leaving', 0)
         return
       endif
-      echohl Error | echom '['.self.name.'] server connection lost' | echohl None
+      call coc#ui#echo_messages('Error', ['['.self.name.'] server connection lost'])
       let name = self.name
       call s:on_exit(name, 0)
       execute 'silent do User ConnectionLost'.toupper(name[0]).name[1:]
     elseif v:exception =~# 'E12'
       " neovim's bug, ignore it
     else
-      echohl Error | echo 'Error on notify ('.a:method.'): '.v:exception | echohl None
+      call coc#ui#echo_messages('Error', ['Error on notify ('.a:method.'): '.v:exception])
     endif
   endtry
 endfunction
@@ -220,7 +220,7 @@ function! s:request_async(method, args, cb) dict
   let channel = coc#client#get_channel(self)
   if empty(channel) | return '' | endif
   if type(a:cb) != 2
-    echohl Error | echom '['.self['name'].'] Callback should be function' | echohl None
+    call coc#ui#echo_messages('Error', ['['.self['name'].'] Callback should be function'])
     return
   endif
   let id = self.async_req_id
@@ -233,7 +233,7 @@ function! s:on_async_response(id, resp, isErr) dict
   let Callback = get(self.async_callbacks, a:id, v:null)
   if empty(Callback)
     " should not happen
-    echohl Error | echom 'callback not found' | echohl None
+    call coc#ui#echo_messages('Error', ['callback not found'])
     return
   endif
   call remove(self.async_callbacks, a:id)
@@ -267,7 +267,7 @@ function! coc#client#stop(name) abort
   if empty(client) | return 1 | endif
   let running = coc#client#is_running(a:name)
   if !running
-    echohl WarningMsg | echom 'client '.a:name. ' not running.' | echohl None
+    call coc#ui#echo_messages('WarningMsg', ['client '.a:name. ' not running.'])
     return 1
   endif
   if s:is_vim
@@ -277,11 +277,11 @@ function! coc#client#stop(name) abort
   endif
   sleep 200m
   if coc#client#is_running(a:name)
-    echohl Error | echom 'client '.a:name. ' stop failed.' | echohl None
+    call coc#ui#echo_messages('Error', ['client '.a:name. ' stop failed.'])
     return 0
   endif
   call s:on_exit(a:name, 0)
-  echohl MoreMsg | echom 'client '.a:name.' stopped!' | echohl None
+  call coc#ui#echo_messages('MoreMsg', ['client '.a:name.' stopped!'])
   return 1
 endfunction
 
@@ -346,16 +346,14 @@ endfunction
 
 function! coc#client#open_log()
   if !get(g:, 'node_client_debug', 0)
-    echohl Error | echon '[coc.nvim] use let g:node_client_debug = 1 in your vimrc to enable debug mode.' | echohl None
+    call coc#ui#echo_messages('Error', ['[coc.nvim] use let g:node_client_debug = 1 in your vimrc to enable debug mode.'])
     return
   endif
   execute 'vs '.s:logfile
 endfunction
 
 function! s:on_error(name, msgs) abort
-  echohl ErrorMsg
-  echo join(a:msgs, "\n")
-  echohl None
+  call coc#ui#echo_messages('ErrorMsg', [join(a:msgs, "\n")])
   let client = get(s:clients, a:name, v:null)
   if !empty(client)
     let errors = get(client, 'stderr', [])

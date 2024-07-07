@@ -397,9 +397,7 @@ function! s:funcs.err_write(str)
 endfunction
 
 function! s:funcs.err_writeln(str)
-  echohl ErrorMsg
-  echom a:str
-  echohl None
+  call coc#ui#echo_messages('ErrorMsg', [a:str], 1)
   call timer_start(0, {-> s:execute('redraw')})
 endfunction
 

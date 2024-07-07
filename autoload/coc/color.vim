@@ -465,9 +465,7 @@ function! coc#color#hexToRgb(color)
     let factor  = 0x10
     end
     if len(matches) < 4
-      echohl Error
-      echom 'Couldnt parse ' . string(color) . ' ' .  string(matches)
-      echohl None
+      call coc#ui#echo_messages('Error', ['Couldnt parse ' . string(color) . ' ' .  string(matches)])
       return
     end
     let r = str2nr(matches[1], 16) * factor
@@ -571,13 +569,13 @@ function! coc#color#pick_color(default_color)
 
   let rgb = v:false
   if !has('python')
-    echohl Error | echom 'python support required, checkout :echo has(''python'')' | echohl None
+    call coc#ui#echo_messages('Error', ['python support required, checkout :echo has(''python'')'])
     return
   endif
   try
     execute 'py import gtk'
   catch /.*/
-    echohl Error | echom 'python gtk module not found' | echohl None
+    call coc#ui#echo_messages('Error', ['python gtk module not found'])
     return
   endtry
 python << endpython

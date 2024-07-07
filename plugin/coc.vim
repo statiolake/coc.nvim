@@ -168,9 +168,7 @@ endfunction
 function! s:OpenConfig()
   let home = coc#util#get_config_home()
   if !isdirectory(home)
-    echohl MoreMsg
-    echom 'Config directory "'.home.'" does not exist, create? (y/n)'
-    echohl None
+    call coc#ui#echo_messages('MoreMsg', ['Config directory "'.home.'" does not exist, create? (y/n)'])
     let confirm = nr2char(getchar())
     redraw!
     if !(confirm ==? "y" || confirm ==? "\r")
@@ -250,9 +248,7 @@ function! s:Disable() abort
   endif
   autocmd! coc_nvim
   call coc#rpc#notify('detach', [])
-  echohl MoreMsg
-    echom '[coc.nvim] Event disabled'
-  echohl None
+  call coc#ui#echo_messages('MoreMsg', ['[coc.nvim] Event disabled'])
   let g:coc_enabled = 0
 endfunction
 
@@ -417,9 +413,7 @@ function! s:Enable(initialize)
   augroup end
   if a:initialize == 0
      call coc#rpc#request('attach', [])
-     echohl MoreMsg
-     echom '[coc.nvim] Event enabled'
-     echohl None
+     call coc#ui#echo_messages('MoreMsg', ['[coc.nvim] Event enabled'])
   endif
 endfunction
 
@@ -647,9 +641,9 @@ function! s:ShowInfo()
       call setline(1, lines)
     else
       if get(g:, 'coc_start_at_startup',1)
-        echohl MoreMsg | echon 'Service stopped for some unknown reason, try :CocStart' | echohl None
+        call coc#ui#echo_messages('MoreMsg', ['Service stopped for some unknown reason, try :CocStart'])
       else
-        echohl MoreMsg | echon 'Start on startup is disabled, try :CocStart' | echohl None
+        call coc#ui#echo_messages('MoreMsg', ['Start on startup is disabled, try :CocStart'])
       endif
     endif
   endif

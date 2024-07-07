@@ -45,7 +45,7 @@ function! coc#rpc#start_server()
       endtry
     endif
     if !s:client['running']
-      echohl Error | echom '[coc.nvim] Unable connect to '.address.' from variable $COC_NVIM_REMOTE_ADDRESS' | echohl None
+      call coc#ui#echo_messages('Error', ['[coc.nvim] Unable connect to '.address.' from variable $COC_NVIM_REMOTE_ADDRESS'])
     elseif !test
       let logfile = exists('$NVIM_COC_LOG_FILE') ? $NVIM_COC_LOG_FILE : ''
       let loglevel = exists('$NVIM_COC_LOG_LEVEL') ? $NVIM_COC_LOG_LEVEL : ''
@@ -159,7 +159,7 @@ function! coc#rpc#restart()
       call coc#client#restart(s:name)
       call s:check_vim_enter()
     endif
-    echohl MoreMsg | echom 'starting coc.nvim service' | echohl None
+    call coc#ui#echo_messages('MoreMsg', ['starting coc.nvim service'])
   endif
 endfunction
 
@@ -229,7 +229,7 @@ endfunction
 " Used on vim and remote address only
 function! s:on_channel_close() abort
   if get(g:, 'coc_node_env', '') !=# 'test'
-    echohl Error | echom '[coc.nvim] channel closed' | echohl None
+    call coc#ui#echo_messages('Error', ['[coc.nvim] channel closed'])
   endif
   if !empty(s:client)
     let s:client['running'] = 0
