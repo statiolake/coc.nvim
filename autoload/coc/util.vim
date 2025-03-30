@@ -3,6 +3,21 @@ let s:root = expand('<sfile>:h:h:h')
 let s:is_win = has('win32') || has('win64')
 let s:is_vim = !has('nvim')
 let s:vim_api_version = 34
+let s:is_win32unix = has('win32unix')
+let s:win32unix_prefix = ''
+let s:win32unix_fix_home = 0
+if s:is_win32unix
+  let home = expand('$HOME')
+  if strpart(home, 0, 6) ==# '/home/'
+    let s:win32unix_fix_home = 1
+    let s:win32unix_prefix = '/'
+  elseif strpart(home, 0, 3) =~# '^/\w/'
+    let s:win32unix_prefix = '/'
+  else
+    let s:win32unix_prefix = matchstr(home, '^\/\w\+\/')
+  endif
+endif
+let s:win32unix_prefix_len = strlen(s:win32unix_prefix)
 
 function! coc#util#merge_winhl(curr, hls) abort
   let highlightMap = {}
@@ -61,19 +76,6 @@ function! coc#util#setline(lnum, line)
   keepjumps call setline(a:lnum, a:line)
 endfunction
 
-function! coc#util#path_replace_patterns() abort
-  if has('win32unix') && exists('g:coc_cygqwin_path_prefixes')
-    echohl WarningMsg
-    echon 'g:coc_cygqwin_path_prefixes is deprecated, use g:coc_uri_prefix_replace_patterns instead'
-    echohl None
-    return g:coc_cygqwin_path_prefixes
-  endif
-  if exists('g:coc_uri_prefix_replace_patterns')
-    return g:coc_uri_prefix_replace_patterns
-  endif
-  return v:null
-endfunction
-
 function! coc#util#version()
   if s:is_vim
     return string(v:versionlong)
@@ -118,11 +120,6 @@ function! coc#util#diagnostic_info(bufnr, checkInsert) abort
       \ }
 endfunction
 
-function! coc#util#open_file(cmd, file)
-  execute a:cmd .' '.fnameescape(fnamemodify(a:file, ':~:.'))
-  return bufnr('%')
-endfunction
-
 function! coc#util#job_command()
   if (has_key(g:, 'coc_node_path'))
     let node = expand(g:coc_node_path)
@@ -144,14 +141,17 @@ function! coc#util#job_command()
   return [node] + get(g:, 'coc_node_args', ['--no-warnings']) + [s:root.'/build/index.js']
 endfunction
 
+function! coc#util#open_file(cmd, file)
+  let file = coc#util#node_to_win32unix(a:file)
+  execute a:cmd .' '.fnameescape(fnamemodify(file, ':~:.'))
+  return bufnr('%')
+endfunction
+
 function! coc#util#jump(cmd, filepath, ...) abort
   if a:cmd != 'pedit'
     silent! normal! m'
   endif
-  let path = a:filepath
-  if has('win32unix')
-    let path = substitute(a:filepath, '\v\\', '/', 'g')
-  endif
+  let path = coc#util#node_to_win32unix(a:filepath)
   let file = fnamemodify(path, ":~:.")
   if a:cmd ==# 'pedit'
     let extra = empty(get(a:, 1, [])) ? '' : '+'.(a:1[0] + 1)
@@ -210,6 +210,17 @@ function! s:safer_open(cmd, file) abort
     exe 'keepjumps buffer ' . buf
   else
     if a:cmd =~# 'drop'
+      if a:cmd ==# 'tab drop' && bufexists(a:file)
+        let bufnr = bufnr(a:file)
+        if bufnr == bufnr('%')
+          return
+        endif
+        let winid = coc#window#buf_winid(bufnr)
+        if winid != -1
+          call win_gotoid(winid)
+          return
+        endif
+      endif
       let saved = &wildignore
       set wildignore=
       execute a:cmd.' '.fnameescape(a:file)
@@ -257,9 +268,10 @@ function! s:Call(method, args)
   endtry
 endfunction
 
+" Global vim information
 function! coc#util#vim_info()
   return {
-        \ 'root': s:root,
+        \ 'root': coc#util#win32unix_to_node(s:root),
         \ 'apiversion': s:vim_api_version,
         \ 'mode': mode(),
         \ 'config': get(g:, 'coc_user_config', {}),
@@ -273,8 +285,11 @@ function! coc#util#vim_info()
         \ 'filetypeMap': get(g:, 'coc_filetype_map', {}),
         \ 'version': coc#util#version(),
         \ 'pumevent': 1,
+        \ 'dialog': 1,
+        \ 'unixPrefix': s:win32unix_prefix,
+        \ 'jumpAutocmd': coc#util#check_jump_autocmd(),
         \ 'isVim': has('nvim') ? v:false : v:true,
-        \ 'isCygwin': has('win32unix') ? v:true : v:false,
+        \ 'isCygwin': s:is_win32unix ? v:true : v:false,
         \ 'isMacvim': has('gui_macvim') ? v:true : v:false,
         \ 'isiTerm': $TERM_PROGRAM ==# "iTerm.app",
         \ 'colorscheme': get(g:, 'colors_name', ''),
@@ -286,15 +301,25 @@ function! coc#util#vim_info()
         \ 'guicursor': &guicursor,
         \ 'pumwidth': exists('&pumwidth') ? &pumwidth : 15,
         \ 'tabCount': tabpagenr('$'),
-        \ 'updateHighlight': has('nvim-0.5.0') || has('textprop') ? v:true : v:false,
         \ 'vimCommands': get(g:, 'coc_vim_commands', []),
+        \ 'virtualText': v:true,
         \ 'sign': exists('*sign_place') && exists('*sign_unplace'),
         \ 'ambiguousIsNarrow': &ambiwidth ==# 'single' ? v:true : v:false,
         \ 'textprop': has('textprop') ? v:true : v:false,
-        \ 'virtualText': has('nvim-0.5.0') || has('patch-9.0.0067') ? v:true : v:false,
-        \ 'dialog': 1,
         \ 'semanticHighlights': coc#util#semantic_hlgroups()
         \}
+endfunction
+
+function! coc#util#check_jump_autocmd() abort
+  let autocmd_event = 'User'
+  let autocmd_group = 'CocJumpPlaceholder'
+  if exists('#' . autocmd_event . '#' . autocmd_group)
+    let content = execute('autocmd ' . autocmd_event . ' ' . autocmd_group)
+    if content =~# 'showSignatureHelp'
+      return v:true
+    endif
+  endif
+  return v:false
 endfunction
 
 function! coc#util#all_state()
@@ -394,18 +419,13 @@ function! coc#util#get_editoroption(winid) abort
   if buftype !=# '' && buftype !=# 'acwrite'
     return v:null
   endif
-  let tabSize = getbufvar(bufnr, '&shiftwidth')
-  if tabSize == 0
-    let tabSize = getbufvar(bufnr, '&tabstop')
-  endif
   return {
         \ 'bufnr': bufnr,
         \ 'winid': a:winid,
         \ 'tabpageid': coc#util#tabnr_id(info['tabnr']),
         \ 'winnr': winnr(),
         \ 'visibleRanges': s:visible_ranges(a:winid),
-        \ 'tabSize': tabSize,
-        \ 'insertSpaces': getbufvar(bufnr, '&expandtab') ? v:true : v:false
+        \ 'formatOptions': coc#util#get_format_opts(bufnr),
         \ }
 endfunction
 
@@ -431,7 +451,7 @@ function! coc#util#editor_infos() abort
           \ 'winid': info['winid'],
           \ 'bufnr': bufnr,
           \ 'tabid': coc#util#tabnr_id(info['tabnr']),
-          \ 'fullpath': empty(bufname) ? '' : fnamemodify(bufname, ':p'),
+          \ 'fullpath': empty(bufname) ? '' : coc#util#win32unix_to_node(fnamemodify(bufname, ':p')),
           \ })
     endif
   endfor
@@ -446,7 +466,7 @@ function! coc#util#tabpages() abort
 endfunction
 
 function! coc#util#getpid()
-  if !has('win32unix')
+  if !s:is_win32unix
     return getpid()
   endif
   let cmd = 'cat /proc/' . getpid() . '/winpid'
@@ -465,7 +485,9 @@ function! coc#util#get_indentkeys() abort
 endfunction
 
 function! coc#util#get_bufoptions(bufnr, max) abort
-  if !bufloaded(a:bufnr) | return v:null | endif
+  if !bufloaded(a:bufnr)
+    return v:null
+  endif
   let bufname = bufname(a:bufnr)
   let buftype = getbufvar(a:bufnr, '&buftype')
   let commandline = get(getbufinfo(a:bufnr)[0], 'command', 0) || bufname(a:bufnr) == '[Command Line]'
@@ -492,8 +514,16 @@ function! coc#util#get_bufoptions(bufnr, max) abort
         \ 'lisp': getbufvar(a:bufnr, '&lisp'),
         \ 'iskeyword': getbufvar(a:bufnr, '&iskeyword'),
         \ 'changedtick': getbufvar(a:bufnr, 'changedtick'),
-        \ 'fullpath': empty(bufname) ? '' : fnamemodify(bufname, ':p'),
+        \ 'fullpath': empty(bufname) ? '' : coc#util#win32unix_to_node(fnamemodify(bufname, ':p')),
         \}
+endfunction
+
+" Get fullpath for NodeJs of current buffer or bufnr
+function! coc#util#get_fullpath(...) abort
+  if a:0 == 0
+    return coc#util#win32unix_to_node(expand('%:p'))
+  endif
+  return coc#util#win32unix_to_node(fnamemodify(bufname(a:1), ':p'))
 endfunction
 
 function! coc#util#bufsize(bufnr) abort
@@ -507,40 +537,57 @@ function! coc#util#bufsize(bufnr) abort
   return strlen(join(getbufline(a:bufnr, 1, '$'), '\n'))
 endfunction
 
-function! coc#util#get_config_home()
+function! coc#util#get_config_home(...)
+  let skip_convert = get(a:, 1, 0)
+  let dir = ''
   if !empty(get(g:, 'coc_config_home', ''))
-      return resolve(expand(g:coc_config_home))
-  endif
-  if exists('$VIMCONFIG')
-    return resolve($VIMCONFIG)
-  endif
-  if has('nvim')
-    if exists('$XDG_CONFIG_HOME')
-      return resolve($XDG_CONFIG_HOME."/nvim")
-    endif
-    if s:is_win
-      return resolve($HOME.'/AppData/Local/nvim')
-    endif
-    return resolve($HOME.'/.config/nvim')
+    let dir = resolve(expand(g:coc_config_home))
   else
-    if s:is_win
-      return resolve($HOME."/vimfiles")
+    if exists('$VIMCONFIG')
+      let dir =  resolve($VIMCONFIG)
+    else
+      if has('nvim')
+        let appname = empty($NVIM_APPNAME) ? 'nvim' : $NVIM_APPNAME
+        if exists('$XDG_CONFIG_HOME')
+          let dir = s:resolve($XDG_CONFIG_HOME, appname)
+        else
+          if s:is_win
+            let dir = s:resolve($HOME, 'AppData/Local/'.appname)
+          else
+            let dir = s:resolve($HOME, '.config/'.appname)
+          endif
+        endif
+      else
+        if s:is_win || s:is_win32unix
+          let dir = s:resolve($HOME, "vimfiles")
+        else
+          if isdirectory(s:resolve($HOME, '.vim'))
+            let dir = s:resolve($HOME, '.vim')
+          else
+            if exists('$XDG_CONFIG_HOME') && isdirectory(resolve($XDG_CONFIG_HOME))
+              let dir = s:resolve($XDG_CONFIG_HOME, 'vim')
+            else
+              let dir = s:resolve($HOME, '.config/vim')
+            endif
+          endif
+        endif
+      endif
     endif
-    return resolve($HOME.'/.vim')
   endif
+  return skip_convert ? dir : coc#util#win32unix_to_node(dir)
 endfunction
 
 function! coc#util#get_data_home()
-  if get(g:, 'coc_node_env', '') ==# 'test'
-    return $COC_DATA_HOME
+  if get(g:, 'coc_node_env', '') ==# 'test' && !empty($COC_DATA_HOME)
+    return coc#util#win32unix_to_node($COC_DATA_HOME)
   endif
   if !empty(get(g:, 'coc_data_home', ''))
     let dir = resolve(expand(g:coc_data_home))
   else
     if exists('$XDG_CONFIG_HOME') && isdirectory(resolve($XDG_CONFIG_HOME))
-      let dir = resolve($XDG_CONFIG_HOME."/coc")
+      let dir = s:resolve($XDG_CONFIG_HOME, 'coc')
     else
-      if s:is_win
+      if s:is_win || s:is_win32unix
         let dir = resolve(expand('~/AppData/Local/coc'))
       else
         let dir = resolve(expand('~/.config/coc'))
@@ -555,7 +602,33 @@ function! coc#util#get_data_home()
           \ })
     call mkdir(dir, "p", 0755)
   endif
-  return dir
+  return coc#util#win32unix_to_node(dir)
+endfunction
+
+" /cygdrive/c/Users/YourName
+" /mnt/c/Users/YourName
+" /c/Users/YourName
+function! coc#util#win32unix_to_node(filepath) abort
+  if s:is_win32unix
+    let fullpath = a:filepath
+    " /home/YourName => /c/User/YourName
+    if s:win32unix_fix_home && strpart(a:filepath, 0, 6) ==# '/home/'
+      let fullpath = substitute(a:filepath, '^/home', '/c/User', '')
+    endif
+    if strpart(fullpath, 0, s:win32unix_prefix_len) ==# s:win32unix_prefix
+      let part = strpart(fullpath, s:win32unix_prefix_len)
+      return toupper(part[0]) . ':' . substitute(part[1:], '/', '\', 'g')
+    endif
+  endif
+  return a:filepath
+endfunction
+
+function! coc#util#node_to_win32unix(filepath) abort
+  if s:is_win32unix && a:filepath =~# '^\w:\\'
+    let part = tolower(a:filepath[0]) . a:filepath[2:]
+    return s:win32unix_prefix . substitute(part, '\\', '/', 'g')
+  endif
+  return a:filepath
 endfunction
 
 function! coc#util#get_complete_option()
@@ -657,4 +730,9 @@ function! s:visible_ranges(winid) abort
     endif
   endwhile
   return res
+endfunction
+
+" for avoid bug with vim&neovim https://github.com/neoclide/coc.nvim/discussions/5287
+function! s:resolve(path, part) abort
+  return resolve(a:path . '/' . a:part)
 endfunction

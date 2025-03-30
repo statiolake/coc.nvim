@@ -2,7 +2,6 @@ scriptencoding utf-8
 let s:is_vim = !has('nvim')
 let s:map_next = 1
 let s:map_prev = 1
-let s:cmd_mapping = has('nvim') || has('patch-8.2.1978')
 
 function! coc#snippet#_select_mappings()
   if !get(g:, 'coc_selectmode_mapping', 1)
@@ -29,7 +28,10 @@ endfunction
 
 function! coc#snippet#show_choices(lnum, col, position, input) abort
   call coc#snippet#move(a:position)
-  call CocActionAsync('startCompletion', { 'source': '$words' })
+  call CocActionAsync('startCompletion', {
+          \ 'source': '$words',
+          \ 'col': a:col
+          \ })
   redraw
 endfunction
 
@@ -50,15 +52,15 @@ function! coc#snippet#enable(...)
   endif
   if !empty(nextkey)
     if s:map_next
-      execute 'inoremap <buffer><nowait><silent>'.nextkey." <C-R>=coc#snippet#jump(1, ".complete.")<cr>"
+      execute 'inoremap <buffer><nowait><silent>'.nextkey." <Cmd>:call coc#snippet#jump(1, ".complete.")<cr>"
     endif
-    execute 'snoremap <buffer><nowait><silent>'.nextkey." <Esc>:call coc#snippet#jump(1, ".complete.")<cr>"
+    execute 'snoremap <buffer><nowait><silent>'.nextkey." <Cmd>:call coc#snippet#jump(1, ".complete.")<cr>"
   endif
   if !empty(prevkey)
     if s:map_prev
-      execute 'inoremap <buffer><nowait><silent>'.prevkey." <C-R>=coc#snippet#jump(0, ".complete.")<cr>"
+      execute 'inoremap <buffer><nowait><silent>'.prevkey." <Cmd>:call coc#snippet#jump(0, ".complete.")<cr>"
     endif
-    execute 'snoremap <buffer><nowait><silent>'.prevkey." <Esc>:call coc#snippet#jump(0, ".complete.")<cr>"
+    execute 'snoremap <buffer><nowait><silent>'.prevkey." <Cmd>:call coc#snippet#jump(0, ".complete.")<cr>"
   endif
 endfunction
 
@@ -85,6 +87,7 @@ function! coc#snippet#jump(direction, complete) abort
       return ''
     endif
   endif
+  call coc#pum#close()
   call coc#rpc#request(a:direction == 1 ? 'snippetNext' : 'snippetPrev', [])
   return ''
 endfunction
@@ -110,7 +113,7 @@ function! coc#snippet#select(start, end, text) abort
   if coc#pum#visible()
     call coc#pum#close()
   endif
-  if mode() == 's'
+  if mode() ==? 's'
     call feedkeys("\<Esc>", 'in')
   endif
   if &selection ==# 'exclusive'
@@ -125,16 +128,16 @@ function! coc#snippet#select(start, end, text) abort
     call cursor([cursor[0], cursor[1] - 1])
     let len = strchars(a:text) - 1
     let cmd = ''
-    let cmd .= mode()[0] ==# 'i' ? "\<Esc>l" : ''
+    let cmd .= mode()[0] ==# 'i' ? "\<Esc>".(col('.') == 1 ? '' : 'l') : ''
     let cmd .= printf('v%s', len > 0 ? len . 'h' : '')
     let cmd .= "o\<C-g>"
   endif
-  call feedkeys(cmd, 'n')
+  call feedkeys(cmd, 'nt')
 endfunction
 
 function! coc#snippet#move(position) abort
   let m = mode()
-  if m == 's'
+  if m ==? 's'
     call feedkeys("\<Esc>", 'in')
   endif
   let pos = coc#snippet#to_cursor(a:position)

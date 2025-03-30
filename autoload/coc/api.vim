@@ -20,6 +20,8 @@ let s:buffer_id = {}
 let s:id_types = {}
 let s:tab_id = 1
 let s:keymap_arguments = ['nowait', 'silent', 'script', 'expr', 'unique']
+" Boolean options of vim 9.1.1134
+let s:boolean_options = ['allowrevins', 'arabic', 'arabicshape', 'autochdir', 'autoindent', 'autoread', 'autoshelldir', 'autowrite', 'autowriteall', 'backup', 'balloonevalterm', 'binary', 'bomb', 'breakindent', 'buflisted', 'cdhome', 'cindent', 'compatible', 'confirm', 'copyindent', 'cursorbind', 'cursorcolumn', 'cursorline', 'delcombine', 'diff', 'digraph', 'edcompatible', 'emoji', 'endoffile', 'endofline', 'equalalways', 'errorbells', 'esckeys', 'expandtab', 'exrc', 'fileignorecase', 'fixendofline', 'foldenable', 'fsync', 'gdefault', 'hidden', 'hkmap', 'hkmapp', 'hlsearch', 'icon', 'ignorecase', 'imcmdline', 'imdisable', 'incsearch', 'infercase', 'insertmode', 'joinspaces', 'langnoremap', 'langremap', 'lazyredraw', 'linebreak', 'lisp', 'list', 'loadplugins', 'magic', 'modeline', 'modelineexpr', 'modifiable', 'modified', 'more', 'number', 'paste', 'preserveindent', 'previewwindow', 'prompt', 'readonly', 'relativenumber', 'remap', 'revins', 'rightleft', 'ruler', 'scrollbind', 'secure', 'shelltemp', 'shiftround', 'shortname', 'showcmd', 'showfulltag', 'showmatch', 'showmode', 'smartcase', 'smartindent', 'smarttab', 'smoothscroll', 'spell', 'splitbelow', 'splitright', 'startofline', 'swapfile', 'tagbsearch', 'tagrelative', 'tagstack', 'termbidi', 'termguicolors', 'terse', 'textauto', 'textmode', 'tildeop', 'timeout', 'title', 'ttimeout', 'ttybuiltin', 'ttyfast', 'undofile', 'visualbell', 'warn', 'weirdinvert', 'wildignorecase', 'wildmenu', 'winfixbuf', 'winfixheight', 'winfixwidth', 'wrap', 'wrapscan', 'write', 'writeany', 'writebackup', 'xtermcodes']
 
 " helper {{
 " Create a window with bufnr for execute win_execute
@@ -35,7 +37,7 @@ function! s:create_popup(bufnr) abort
 endfunction
 
 function! s:check_bufnr(bufnr) abort
-  if !bufloaded(a:bufnr)
+  if a:bufnr != 0 && !bufloaded(a:bufnr)
     throw 'Invalid buffer id: '.a:bufnr
   endif
 endfunction
@@ -96,12 +98,12 @@ function! s:tabnr_id(nr) abort
   return tid
 endfunction
 
-function! s:generate_id(bufnr) abort
-  let max = get(s:buffer_id, a:bufnr, s:prop_offset)
-  let id = max + 1
-  let s:buffer_id[a:bufnr] = id
+def s:generate_id(bufnr: number): number
+  const max: number = get(s:buffer_id, bufnr, s:prop_offset)
+  const id: number = max + 1
+  s:buffer_id[bufnr] = id
   return id
-endfunction
+enddef
 
 function! s:win_execute(winid, cmd, ...) abort
   let ref = get(a:000, 0, v:null)
@@ -120,20 +122,17 @@ function! s:win_tabnr(winid) abort
 endfunction
 
 function! s:buf_line_count(bufnr) abort
-  if bufnr('%') == a:bufnr
+  if a:bufnr == 0
     return line('$')
   endif
-  if exists('*getbufinfo')
-    let info = getbufinfo(a:bufnr)
-    if empty(info)
-      return 0
-    endif
-    " vim 8.1 has getbufinfo but no linecount
-    if has_key(info[0], 'linecount')
-      return info[0]['linecount']
-    endif
+  let info = getbufinfo(a:bufnr)
+  if empty(info)
+    throw "Invalid buffer id: ".a:bufnr
   endif
-  return len(getbufline(a:bufnr, 1, '$'))
+  if info[0]['loaded'] == 0
+    return 0
+  endif
+  return info[0]['linecount']
 endfunction
 
 function! s:execute(cmd)
@@ -433,6 +432,71 @@ function! s:funcs.del_keymap(mode, lhs) abort
   execute 'silent '.a:mode.'unmap '.lhs
   return v:null
 endfunction
+
+function! s:funcs.set_option_value(name, value, opts) abort
+  let l:win = get(a:opts, 'win', 0)
+  let l:buf = get(a:opts, 'buf', 0)
+  if has_key(a:opts, 'scope') && has_key(a:opts, 'buf')
+    throw "Can't use both scope and buf"
+  endif
+  let l:scope = get(a:opts, 'scope', 'global')
+  call s:check_option_args(l:scope, l:win, l:buf)
+  if l:buf != 0
+    call s:funcs.buf_set_option(l:buf, a:name, a:value)
+  elseif l:win != 0
+    call s:funcs.win_set_option(l:win, a:name, a:value)
+  else
+    if l:scope ==# 'global'
+      execute 'let &'.a:name.' = a:value'
+    else
+      call s:funcs.win_set_option(win_getid(), a:name, a:value)
+      call s:funcs.buf_set_option(bufnr('%'), a:name, a:value)
+    endif
+  endif
+  return v:null
+endfunction
+
+function! s:funcs.get_option_value(name, opts) abort
+  let l:win = get(a:opts, 'win', 0)
+  let l:buf = get(a:opts, 'buf', 0)
+  if has_key(a:opts, 'scope') && has_key(a:opts, 'buf')
+    throw "Can't use both scope and buf"
+  endif
+  let l:scope = get(a:opts, 'scope', 'global')
+  call s:check_option_args(l:scope, l:win, l:buf)
+  let l:result = v:null
+  " return eval('&'.a:name)
+  if l:buf != 0
+    let l:result = getbufvar(l:buf, '&'.a:name)
+  elseif l:win != 0
+    let l:result = s:funcs.win_get_option(l:win, a:name)
+  else
+    if l:scope ==# 'global'
+      let l:result = eval('&'.a:name)
+    else
+      let l:result = gettabwinvar(tabpagenr(), 0, '&'.a:name, get(a:, 1, v:null))
+      if l:result is v:null
+        let l:result = getbufvar(bufnr('%'), '&'.a:name)
+      endif
+    endif
+  endif
+  if index(s:boolean_options, a:name) != -1
+    return l:result == 0 ? v:false : v:true
+  endif
+  return l:result
+endfunction
+
+function! s:check_option_args(scope, win, buf) abort
+  if a:scope !=# 'global' && a:scope !=# 'local'
+    throw "Invalid 'scope': expected 'local' or 'global'"
+  endif
+  if a:win && empty(getwininfo(a:win)) && empty(popup_getpos(a:win))
+    throw "Invalid window id: ".a:win
+  endif
+  if a:buf && !bufexists(a:buf)
+    throw "Invalid buffer id: ".a:buf
+  endif
+endfunction
 " }}
 
 " buffer methods {{
@@ -471,63 +535,68 @@ function! s:funcs.buf_get_mark(bufnr, name)
   return [line("'" . a:name), col("'" . a:name) - 1]
 endfunction
 
-function! s:funcs.buf_add_highlight(bufnr, srcId, hlGroup, line, colStart, colEnd, ...) abort
-  if a:srcId == 0
-    let srcId = s:max_src_id + 1
-    let s:max_src_id = srcId
+def s:funcs.buf_add_highlight(bufnr: number, srcId: number, hlGroup: string, line: number, colStart: number, colEnd: number, ...optionalArguments: list<dict<any>>): any
+    const opts: dict<any> = get(optionalArguments, 0, {})
+    return coc#api#funcs_buf_add_highlight(bufnr, srcId, hlGroup, line, colStart, colEnd, opts)
+enddef
+
+" To be called directly for better performance
+def coc#api#funcs_buf_add_highlight(bufnr: number, srcId: number, hlGroup: string, line: number, colStart: number, colEnd: number, propTypeOpts: dict<any> = {}): any
+  var sourceId: number
+  if srcId == 0
+    sourceId = s:max_src_id + 1
+    s:max_src_id = sourceId
   else
-    let srcId = a:srcId
+    sourceId = srcId
   endif
-  let bufnr = a:bufnr == 0 ? bufnr('%') : a:bufnr
-  let type = srcId == -1 ? a:hlGroup : a:hlGroup.'_'.srcId
-  let types = get(s:id_types, srcId, [])
-  if index(types, type) == -1
-    call add(types, type)
-    let s:id_types[srcId] = types
-    if empty(prop_type_get(type))
-      call prop_type_add(type, extend({'highlight': a:hlGroup}, get(a:, 1, {})))
+  const bufferNumber: number = bufnr == 0 ? bufnr('%') : bufnr
+  const propType: string = srcId == -1 ? hlGroup : $'{hlGroup}_{sourceId}'
+  final propTypes: list<string> = get(s:id_types, srcId, [])
+  if index(propTypes, propType) == -1
+    add(propTypes, propType)
+    s:id_types[srcId] = propTypes
+    if empty(prop_type_get(propType))
+      prop_type_add(propType, extend({'highlight': hlGroup}, propTypeOpts))
     endif
   endif
-  let end = a:colEnd == -1 ? strlen(get(getbufline(bufnr, a:line + 1), 0, '')) + 1 : a:colEnd + 1
-  if end < a:colStart + 1
-    return
+  const columnEnd: number = colEnd == -1 ? strlen(get(getbufline(bufferNumber, line + 1), 0, '')) + 1 : colEnd + 1
+  if columnEnd < colStart + 1
+    return 0 # Same as `:return` without expression in `:function`
   endif
-  let id = s:generate_id(a:bufnr)
+  const propId: number = s:generate_id(bufnr)
   try
-    call prop_add(a:line + 1, a:colStart + 1, {'bufnr': bufnr, 'type': type, 'id': id, 'end_col': end})
+    prop_add(line + 1, colStart + 1, {'bufnr': bufferNumber, 'type': propType, 'id': propId, 'end_col': columnEnd})
   catch /^Vim\%((\a\+)\)\=:\(E967\|E964\)/
-    " ignore 967
+    # ignore 967
   endtry
-  if a:srcId == 0
-    " return generated srcId
-    return srcId
+  if srcId == 0
+    # return generated sourceId
+    return sourceId
   endif
   return v:null
-endfunction
+enddef
 
 function! s:funcs.buf_clear_namespace(bufnr, srcId, startLine, endLine) abort
   let bufnr = a:bufnr == 0 ? bufnr('%') : a:bufnr
   let start = a:startLine + 1
-  let end = a:endLine == -1 ? len(getbufline(bufnr, 1, '$')) : a:endLine
+  let end = a:endLine == -1 ? s:buf_line_count(bufnr) : a:endLine
   if a:srcId == -1
     if has_key(s:buffer_id, a:bufnr)
       unlet s:buffer_id[a:bufnr]
     endif
     call prop_clear(start, end, {'bufnr' : bufnr})
   else
-    for type in get(s:id_types, a:srcId, [])
-      try
-        call prop_remove({'bufnr': bufnr, 'all': 1, 'type': type}, start, end)
-      catch /^Vim\%((\a\+)\)\=:E968/
-        " ignore 968
-      endtry
-    endfor
+    let types = get(s:id_types, a:srcId, [])
+    try
+      call prop_remove({'bufnr': bufnr, 'all': 1, 'types': types}, start, end)
+    catch /^Vim\%((\a\+)\)\=:E968/
+      " ignore 968
+    endtry
   endif
   return v:null
 endfunction
 
 function! s:funcs.buf_line_count(bufnr) abort
-  call s:check_bufnr(a:bufnr)
   return s:buf_line_count(a:bufnr)
 endfunction
 
@@ -873,7 +942,18 @@ endfunction
 
 function! coc#api#notify(method, args) abort
   try
-    call call(s:funcs[a:method], a:args)
+    " vim throw error with return when vim9 function has no return value.
+    if a:method ==# 'call_function'
+      call call(a:args[0], a:args[1])
+    elseif a:method ==# 'call_dict_function'
+      if type(a:args[0]) == v:t_string
+        call call(a:args[1], a:args[2], eval(a:args[0]))
+      else
+        call call(a:args[1], a:args[2], a:args[0])
+      endif
+    else
+      call call(s:funcs[a:method], a:args)
+    endif
   catch /.*/
     call coc#rpc#notify('nvim_error_event', [0, v:exception.' on api "'.a:method.'" '.json_encode(a:args)])
   endtry
